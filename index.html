@@ -1,31 +1,158 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>ROI-su7 - Research Profile</title>
+  <title>Merry Christmas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+  <!-- 微信分享需要 -->
+  <meta property="og:title" content="🎄 Merry Christmas">
+  <meta property="og:description" content="To：马一方｜希望你每天开心～">
+  <meta property="og:type" content="website">
+
   <style>
-    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6; }
-    h1 { color: #333; }
-    a { color: #0073e6; text-decoration: none; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+      font-family: -apple-system, BlinkMacSystemFont;
+    }
+
+    .text {
+      position: absolute;
+      right: 6%;
+      top: 40%;
+      color: white;
+      z-index: 10;
+    }
+
+    .text h1 {
+      font-size: 30px;
+      margin-bottom: 10px;
+      font-weight: 500;
+    }
+
+    .text p {
+      font-size: 18px;
+      opacity: 0.9;
+      margin: 6px 0;
+    }
   </style>
 </head>
 <body>
-  <h1>ROI-su7</h1>
-  <p><strong>Affiliation:</strong> Your University / Research Lab</p>
-  <p><strong>Email:</strong> your_email@example.com</p>
 
-  <h2>Research Interests</h2>
-  <ul>
-    <li>Robotics</li>
-    <li>AI and Vision-Language Models</li>
-    <li>Manipulation Learning</li>
-  </ul>
+<div class="text">
+  <h1>Merry Christmas</h1>
+  <p>To：马一方</p>
+  <p>希望你每天开心～</p>
+</div>
 
-  <h2>Links</h2>
-  <ul>
-    <li><a href="https://scholar.google.com/">Google Scholar</a></li>
-    <li><a href="https://github.com/ROI-su7">GitHub</a></li>
-  </ul>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+
+<script>
+  // 场景
+  const scene = new THREE.Scene();
+
+  // 相机
+  const camera = new THREE.PerspectiveCamera(
+    60,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+  );
+  camera.position.z = 60;
+
+  // 渲染器
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  document.body.appendChild(renderer.domElement);
+
+  // 星空
+  const starGeometry = new THREE.BufferGeometry();
+  const starCount = 1200;
+  const starPositions = [];
+
+  for (let i = 0; i < starCount; i++) {
+    starPositions.push(
+      (Math.random() - 0.5) * 400,
+      (Math.random() - 0.5) * 400,
+      (Math.random() - 0.5) * 400
+    );
+  }
+
+  starGeometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(starPositions, 3)
+  );
+
+  const starMaterial = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.6,
+    transparent: true
+  });
+
+  const stars = new THREE.Points(starGeometry, starMaterial);
+  scene.add(stars);
+
+  // 圣诞树粒子
+  const treeGeometry = new THREE.BufferGeometry();
+  const treeParticles = [];
+
+  for (let i = 0; i < 2500; i++) {
+    const t = Math.random();
+    const height = 40;
+    const radius = (1 - t) * 18;
+
+    const angle = Math.random() * Math.PI * 2;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const y = t * height - 20;
+
+    treeParticles.push(x, y, z);
+  }
+
+  treeGeometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(treeParticles, 3)
+  );
+
+  const treeMaterial = new THREE.PointsMaterial({
+    color: 0xaadfff,
+    size: 0.8,
+    transparent: true,
+    opacity: 0.9
+  });
+
+  const tree = new THREE.Points(treeGeometry, treeMaterial);
+  scene.add(tree);
+
+  // 顶部星星
+  const starTop = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xff7777 })
+  );
+  starTop.position.y = 22;
+  scene.add(starTop);
+
+  // 动画
+  function animate() {
+    requestAnimationFrame(animate);
+    tree.rotation.y += 0.002;
+    stars.rotation.y += 0.0005;
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // 自适应
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+
 </body>
 </html>
 
