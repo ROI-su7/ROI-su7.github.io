@@ -2,25 +2,24 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>3D粒子双控交互系统 - XZ</title>
+    <title>XZ 粒子超感系统 - 30K Particles</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; cursor: none; }
-        canvas { display: block; }
+        body { margin: 0; overflow: hidden; background: #000; }
         #info {
-            position: absolute; top: 20px; left: 20px; color: #00ffff;
+            position: absolute; top: 20px; left: 20px; color: #fff;
             font-family: 'Segoe UI', sans-serif; pointer-events: none;
-            line-height: 1.5; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px;
+            z-index: 10; text-shadow: 0 0 10px rgba(0,255,255,0.8);
         }
-        video { transform: scaleX(-1); position: absolute; bottom: 10px; right: 10px; width: 180px; border-radius: 10px; opacity: 0.7; }
+        video { transform: scaleX(-1); position: absolute; bottom: 10px; right: 10px; width: 150px; border-radius: 8px; border: 1px solid #333; }
+        canvas { filter: contrast(1.2) brightness(1.1); }
     </style>
 </head>
 <body>
     <div id="info">
-        <b>[左手] 控制形态：</b><br>
-        1指: Hello | 2指: 我是 XZ | 3指: 夜宵吃什么<br>
-        捏合/张开: 粒子缩放<br><br>
-        <b>[右手] 实时扰动：</b><br>
-        在粒子群中移动手指产生力场
+        <h2 style="margin:0">XZ 粒子交互系统</h2>
+        <p>粒子数: 30,000 | 状态: 实时响应</p>
+        <b>左手控制：</b>1/2/3指切换文字 | 捏合缩放<br>
+        <b>右手交互：</b>穿梭粒子群产生物理扰动
     </div>
     <video id="input_video"></video>
 
@@ -30,33 +29,46 @@
 
     <script>
         const videoElement = document.getElementById('input_video');
-        const pCount = 6000;
+        const pCount = 30000; // 粒子数提升至 3万
         let scene, camera, renderer, particles, geometry;
         let targetPoints = [];
         let curScale = 1;
-        let disturbPoint = new THREE.Vector3(1000, 1000, 1000); // 右手力场位置
+        let disturbPoint = new THREE.Vector3(1000, 1000, 1000);
 
-        // --- 1. 文字采样系统 ---
+        // --- 文字采样优化：支持高密度 ---
         function createTextPoints(text) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 512; canvas.height = 256;
+            canvas.width = 600; canvas.height = 300;
             ctx.fillStyle = 'white';
-            ctx.font = 'bold 50px "Microsoft YaHei"';
+            ctx.font = 'bold 60px "Microsoft YaHei"';
             ctx.textAlign = 'center';
-            ctx.fillText(text, 256, 128);
+            ctx.fillText(text, 300, 150);
 
-            const data = ctx.getImageData(0, 0, 512, 256).data;
+            const data = ctx.getImageData(0, 0, 600, 300).data;
             const pts = [];
-            for (let y = 0; y < 256; y += 3) {
-                for (let x = 0; x < 512; x += 3) {
-                    if (data[(y * 512 + x) * 4 + 3] > 128) {
-                        pts.push(new THREE.Vector3((x - 256) * 0.04, (128 - y) * 0.04, 0));
+            // 采样主点
+            for (let y = 0; y < 300; y += 2) {
+                for (let x = 0; x < 600; x += 2) {
+                    if (data[(y * 600 + x) * 4 + 3] > 128) {
+                        pts.push(new THREE.Vector3((x - 300) * 0.04, (150 - y) * 0.04, 0));
                     }
                 }
             }
-            while (pts.length < pCount) pts.push(new THREE.Vector3(0,0,0));
-            return pts;
+            
+            const finalPts = [];
+            for (let i = 0; i < pCount; i++) {
+                // 如果采样点不足，则在已有采样点周围随机分布，增加厚度感
+                const source = pts[i % pts.length];
+                const p = source.clone();
+                if (i >= pts.length) {
+                    p.x += (Math.random() - 0.5) * 0.5;
+                    p.y += (Math.random() - 0.5) * 0.5;
+                    p.z += (Math.random() - 0.5) * 0.5;
+                }
+                finalPts.push(p);
+            }
+            return finalPts;
         }
 
         const library = {
@@ -66,79 +78,103 @@
         };
         targetPoints = library[1];
 
-        // --- 2. Three.js 初始化 ---
         function init() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-            camera.position.z = 15;
+            camera.position.z = 18;
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ antialias: false }); // 粒子多时关闭抗锯齿提升性能
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
             geometry = new THREE.BufferGeometry();
             const posArray = new Float32Array(pCount * 3);
-            const velArray = new Float32Array(pCount * 3); // 速度数组用于更平滑的扰动
+            const colorArray = new Float32Array(pCount * 3);
+            
+            for(let i=0; i<pCount; i++) {
+                posArray[i*3] = (Math.random()-0.5)*40;
+                posArray[i*3+1] = (Math.random()-0.5)*40;
+                posArray[i*3+2] = (Math.random()-0.5)*40;
+                
+                // 初始颜色：青色系
+                colorArray[i*3] = 0; 
+                colorArray[i*3+1] = 0.8; 
+                colorArray[i*3+2] = 1.0;
+            }
+
             geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
             
             const mat = new THREE.PointsMaterial({ 
-                color: 0x00f3ff, size: 0.07, blending: THREE.AdditiveBlending 
+                size: 0.04, 
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                opacity: 0.6
             });
+
             particles = new THREE.Points(geometry, mat);
             scene.add(particles);
-
             loop();
         }
 
         function loop() {
             requestAnimationFrame(loop);
             const pos = geometry.attributes.position.array;
+            const cols = geometry.attributes.color.array;
             
             for (let i = 0; i < pCount; i++) {
                 const i3 = i * 3;
                 const target = targetPoints[i];
                 
-                // 基础回归动力
                 const destX = target.x * curScale;
                 const destY = target.y * curScale;
-                
-                // 计算与右手扰动点的距离
-                const dx = pos[i3] - disturbPoint.x;
-                const dy = pos[i3+1] - disturbPoint.y;
-                const distSq = dx*dx + dy*dy;
-                const forceRange = 4; // 力场范围
-                
+                const destZ = target.z;
+
+                // 物理计算
+                let dx = pos[i3] - disturbPoint.x;
+                let dy = pos[i3+1] - disturbPoint.y;
+                let distSq = dx*dx + dy*dy;
+                let forceRange = 9; 
+
                 if (distSq < forceRange) {
-                    // 产生排斥力
-                    const force = (forceRange - distSq) / forceRange;
-                    pos[i3] += dx * force * 0.2;
-                    pos[i3+1] += dy * force * 0.2;
+                    let force = (forceRange - distSq) / forceRange;
+                    pos[i3] += dx * force * 0.3;
+                    pos[i3+1] += dy * force * 0.3;
+                    // 扰动时变色（变为紫色）
+                    cols[i3] = 0.8; cols[i3+1] = 0.2;
+                } else {
+                    // 恢复颜色
+                    cols[i3] += (0 - cols[i3]) * 0.05;
+                    cols[i3+1] += (0.8 - cols[i3+1]) * 0.05;
                 }
 
-                // 向目标点平滑插值
-                pos[i3] += (destX - pos[i3]) * 0.08;
-                pos[i3+1] += (destY - pos[i3+1]) * 0.08;
-                pos[i3+2] += (target.z - pos[i3+2]) * 0.08;
+                // 基础平滑回归
+                pos[i3] += (destX - pos[i3]) * 0.06;
+                pos[i3+1] += (destY - pos[i3+1]) * 0.06;
+                pos[i3+2] += (destZ - pos[i3+2]) * 0.06;
             }
             geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+            
+            // 场景轻微旋转增加动感
+            particles.rotation.y += 0.002;
+            
             renderer.render(scene, camera);
         }
 
-        // --- 3. 手势解析逻辑 ---
         function onResults(results) {
-            disturbPoint.set(1000, 1000, 1000); // 默认移出力场
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            disturbPoint.set(1000, 1000, 1000);
+            if (results.multiHandLandmarks) {
                 results.multiHandLandmarks.forEach((landmarks, index) => {
-                    const label = results.multiHandedness[index].label; // Left 或 Right (注意摄像头镜像是反的)
-                    
-                    // 屏幕坐标转换至 3D 空间
-                    const x = (0.5 - landmarks[8].x) * 30; 
+                    const isRightHand = results.multiHandedness[index].label === 'Right';
+                    const x = (0.5 - landmarks[8].x) * 35;
                     const y = (0.5 - landmarks[8].y) * 20;
 
-                    if (label === 'Left') { // 扰动手
+                    if (!isRightHand) { // 左手逻辑：扰动
                         disturbPoint.set(x, y, 0);
-                    } else { // 控制手
+                    } else { // 右手逻辑：控制文字和缩放
                         const check = (t, p) => landmarks[t].y < landmarks[p].y;
                         const count = [check(8,6), check(12,10), check(16,14)].filter(v=>v).length;
                         if (library[count]) targetPoints = library[count];
@@ -150,9 +186,8 @@
             }
         }
 
-        // --- 4. 启动摄像头与 MediaPipe ---
         const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
         hands.onResults(onResults);
 
         new Camera(videoElement, {
@@ -169,6 +204,7 @@
     </script>
 </body>
 </html>
+
 
 
 
