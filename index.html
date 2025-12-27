@@ -1,187 +1,177 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>Merry Christmas</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-
-<meta property="og:title" content="🎄 Merry Christmas">
-<meta property="og:description" content="To：马一方｜希望你每天开心～">
-
-<style>
-body {
-  margin: 0;
-  overflow: hidden;
-  background: black;
-  font-family: -apple-system, BlinkMacSystemFont;
-}
-
-/* 文本区域 */
-.text {
-  position: absolute;
-  right: 6%;
-  top: 40%;
-  color: white;
-  z-index: 10;
-}
-
-.text h1 {
-  font-size: 30px;
-  margin-bottom: 12px;
-  font-weight: 500;
-}
-
-#name span {
-  opacity: 0;
-  font-size: 22px;
-  color: #fff;
-  text-shadow: 0 0 10px #aaddff;
-  animation: glow 1.2s forwards;
-}
-
-@keyframes glow {
-  to {
-    opacity: 1;
-    text-shadow: 0 0 18px #ffffff;
-  }
-}
-</style>
+    <meta charset="UTF-8">
+    <title>3D 粒子手势交互系统</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        #video-container { position: absolute; bottom: 20px; left: 20px; width: 240px; height: 180px; border-radius: 12px; overflow: hidden; border: 2px solid rgba(255,255,255,0.2); transform: scaleX(-1); }
+        #canvas-container { width: 100vw; height: 100vh; }
+        .ui-overlay { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; }
+        button { background: rgba(255,255,255,0.1); border: 1px solid white; color: white; padding: 10px 20px; cursor: pointer; backdrop-filter: blur(5px); border-radius: 4px; transition: 0.3s; }
+        button:hover { background: rgba(255,255,255,0.3); }
+    </style>
 </head>
 <body>
 
-<div class="text">
-  <h1>Merry Christmas</h1>
-  <div id="name"></div>
-  <p>希望你每天开心～</p>
-</div>
+    <div id="canvas-container"></div>
+    <div id="video-container"><video id="input-video" style="width:100%; height:100%; object-fit: cover;"></video></div>
+    
+    <div class="ui-overlay">
+        <button onclick="toggleFullScreen()">全屏模式</button>
+    </div>
 
-<!-- 🎶 背景音乐 -->
-<audio id="bgm" loop>
-  <source src="https://cdn.pixabay.com/audio/2022/10/25/audio_946b4d14e5.mp3" type="audio/mpeg">
-</audio>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.11.5/dist/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.17.0/dist/lil-gui.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script>
+        // --- 初始化变量 ---
+        let scene, camera, renderer, particles, geometry;
+        const PARTICLE_COUNT = 15000;
+        let currentShape = 'heart';
+        let handScale = 1;
+        const params = { color: 0x00ffff, model: 'heart' };
 
-<script>
-/* ========= 微信自动播放音乐 ========= */
-const audio = document.getElementById("bgm");
-document.addEventListener("WeixinJSBridgeReady", () => {
-  audio.play();
-}, false);
-document.body.addEventListener("click", () => audio.play(), { once: true });
+        // --- 形状生成器 ---
+        const shapes = {
+            heart: (i) => {
+                const t = Math.random() * Math.PI * 2;
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+                return new THREE.Vector3(x * 0.5, y * 0.5, (Math.random() - 0.5) * 5);
+            },
+            flower: (i) => {
+                const t = Math.random() * Math.PI * 2;
+                const r = 8 * Math.cos(5 * t);
+                return new THREE.Vector3(r * Math.cos(t), r * Math.sin(t), (Math.random() - 0.5) * 2);
+            },
+            saturn: (i) => {
+                if (i < PARTICLE_COUNT * 0.6) {
+                    const phi = Math.acos(-1 + (2 * i) / (PARTICLE_COUNT * 0.6));
+                    const theta = Math.sqrt(PARTICLE_COUNT * 0.6 * Math.PI) * phi;
+                    return new THREE.Vector3(5 * Math.cos(theta) * Math.sin(phi), 5 * Math.sin(theta) * Math.sin(phi), 5 * Math.cos(phi));
+                } else {
+                    const r = 7 + Math.random() * 3;
+                    const t = Math.random() * Math.PI * 2;
+                    return new THREE.Vector3(r * Math.cos(t), (Math.random()-0.5), r * Math.sin(t));
+                }
+            },
+            buddha: (i) => { // 抽象佛像：底座+身体+背光
+                const rand = Math.random();
+                if(rand > 0.4) return new THREE.Vector3((Math.random()-0.5)*10, Math.random()*15 - 5, (Math.random()-0.5)*5); // 身体
+                return new THREE.Vector3(Math.cos(i)*12, Math.sin(i)*12, -2); // 圆形背光
+            },
+            fireworks: (i) => {
+                const r = Math.random() * 15;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.random() * Math.PI;
+                return new THREE.Vector3(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+            }
+        };
 
-/* ========= 名字逐字发光 ========= */
-const name = "To：马一方";
-const nameDiv = document.getElementById("name");
+        // --- 初始化 Three.js ---
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
 
-[...name].forEach((char, i) => {
-  const span = document.createElement("span");
-  span.textContent = char;
-  span.style.animationDelay = `${i * 0.3}s`;
-  nameDiv.appendChild(span);
-});
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-/* ========= Three.js 场景 ========= */
-const scene = new THREE.Scene();
+            geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARTICLE_COUNT * 3);
+            for(let i=0; i<PARTICLE_COUNT*3; i++) positions[i] = 0;
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-const camera = new THREE.PerspectiveCamera(
-  60, window.innerWidth / window.innerHeight, 0.1, 1000
-);
-camera.position.z = 65;
+            const material = new THREE.PointsMaterial({
+                size: 0.12,
+                color: params.color,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-document.body.appendChild(renderer.domElement);
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+            
+            updateShape('heart');
+        }
 
-/* 星空 */
-const starsGeo = new THREE.BufferGeometry();
-const starsPos = [];
-for (let i = 0; i < 1200; i++) {
-  starsPos.push(
-    (Math.random() - 0.5) * 400,
-    (Math.random() - 0.5) * 400,
-    (Math.random() - 0.5) * 400
-  );
-}
-starsGeo.setAttribute("position", new THREE.Float32BufferAttribute(starsPos, 3));
-const stars = new THREE.Points(
-  starsGeo,
-  new THREE.PointsMaterial({ color: 0xffffff, size: 0.6 })
-);
-scene.add(stars);
+        function updateShape(shapeKey) {
+            const positions = geometry.attributes.position.array;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const target = shapes[shapeKey](i);
+                gsap.to(positions, {
+                    duration: 1.5,
+                    [i * 3]: target.x,
+                    [i * 3 + 1]: target.y,
+                    [i * 3 + 2]: target.z,
+                    onUpdate: () => geometry.attributes.position.needsUpdate = true
+                });
+            }
+        }
 
-/* 圣诞树 */
-const treeGeo = new THREE.BufferGeometry();
-const treePos = [];
-for (let i = 0; i < 2500; i++) {
-  const t = Math.random();
-  const radius = (1 - t) * 18;
-  const angle = Math.random() * Math.PI * 2;
-  treePos.push(
-    Math.cos(angle) * radius,
-    t * 40 - 20,
-    Math.sin(angle) * radius
-  );
-}
-treeGeo.setAttribute("position", new THREE.Float32BufferAttribute(treePos, 3));
-const tree = new THREE.Points(
-  treeGeo,
-  new THREE.PointsMaterial({ color: 0xaadfff, size: 0.8 })
-);
-scene.add(tree);
+        // --- 手势识别逻辑 ---
+        function initHands() {
+            const videoElement = document.getElementById('input-video');
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+                    // 计算食指尖和拇指尖的距离作为缩放值
+                    const dx = landmarks[4].x - landmarks[8].x;
+                    const dy = landmarks[4].y - landmarks[8].y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    handScale = THREE.MathUtils.lerp(handScale, dist * 5 + 0.5, 0.2);
+                }
+            });
 
-/* 顶部星星 */
-const topStar = new THREE.Mesh(
-  new THREE.SphereGeometry(1.3, 16, 16),
-  new THREE.MeshBasicMaterial({ color: 0xff7777 })
-);
-topStar.position.y = 22;
-scene.add(topStar);
+            const cameraPipe = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            cameraPipe.start();
+        }
 
-/* 💖 爱心粒子 */
-const hearts = [];
-const heartGeo = new THREE.SphereGeometry(0.6, 8, 8);
-const heartMat = new THREE.MeshBasicMaterial({ color: 0xff6699 });
+        // --- UI 控制 ---
+        function initUI() {
+            const gui = new lil.GUI();
+            gui.addColor(params, 'color').name('粒子颜色').onChange(val => particles.material.color.set(val));
+            gui.add(params, 'model', ['heart', 'flower', 'saturn', 'buddha', 'fireworks']).name('模型选择').onChange(val => updateShape(val));
+        }
 
-for (let i = 0; i < 40; i++) {
-  const heart = new THREE.Mesh(heartGeo, heartMat);
-  resetHeart(heart);
-  scene.add(heart);
-  hearts.push(heart);
-}
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else document.exitFullscreen();
+        }
 
-function resetHeart(h) {
-  h.position.set(
-    (Math.random() - 0.5) * 10,
-    Math.random() * 30 - 10,
-    (Math.random() - 0.5) * 10
-  );
-  h.speed = Math.random() * 0.05 + 0.02;
-}
+        // --- 动画循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            particles.rotation.y += 0.005;
+            particles.scale.set(handScale, handScale, handScale);
+            renderer.render(scene, camera);
+        }
 
-/* 动画 */
-function animate() {
-  requestAnimationFrame(animate);
-  tree.rotation.y += 0.002;
-  stars.rotation.y += 0.0004;
+        // 启动
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
 
-  hearts.forEach(h => {
-    h.position.y += h.speed;
-    if (h.position.y > 30) resetHeart(h);
-  });
-
-  renderer.render(scene, camera);
-}
-animate();
-
-/* 自适应 */
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-</script>
-
+        initThree();
+        initHands();
+        initUI();
+        animate();
+    </script>
 </body>
 </html>
