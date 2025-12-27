@@ -2,185 +2,180 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Three.js 手势交互传送门</title>
+    <title>Doctor Strange Portal Interaction</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #canvas-container { width: 100vw; height: 100vh; }
-        #video-input { position: absolute; bottom: 10px; right: 10px; width: 200px; height: auto; border: 2px solid #555; transform: rotateY(180deg); }
-        #status { position: absolute; top: 20px; left: 20px; color: #fbbf24; font-family: sans-serif; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #video-container { 
+            position: absolute; top: 20px; right: 20px; 
+            width: 180px; height: 135px; border-radius: 10px; 
+            overflow: hidden; border: 2px solid rgba(255,165,0,0.3); 
+            transform: scaleX(-1);
+        }
+        .instructions {
+            position: absolute; bottom: 30px; left: 50%; 
+            transform: translateX(-50%); color: #ff9800;
+            text-align: center; pointer-events: none;
+            text-shadow: 0 0 10px rgba(0,0,0,1);
+        }
     </style>
 </head>
 <body>
-    <div id="status">正在加载手势模型... (请确保开启摄像头权限)</div>
-    <video id="video-input" autoplay playsinline></video>
+
     <div id="canvas-container"></div>
+    <div id="video-container"><video id="input-video" style="width:100%; height:100%; object-fit: cover;"></video></div>
+    
+    <div class="instructions">
+        握拳：关闭传送门 | 五指张开并旋转：开启传送门<br>
+        伸出食指与中指：触发粒子扰动
+    </div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        let scene, camera, renderer, particles, geometry;
+        const PARTICLE_COUNT = 12000;
+        let portalState = { visible: false, rotation: 0, perturbation: 0, size: 1 };
+        
+        // 初始化颜色：奇异博士传送门经典的橙黄色
+        const portalColor = new THREE.Color(0xff6a00);
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 20;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARTICLE_COUNT * 3);
+            const sizes = new Float32Array(PARTICLE_COUNT);
+            const randomness = new Float32Array(PARTICLE_COUNT);
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                // 初始位置设为 0
+                positions[i * 3] = 0;
+                positions[i * 3 + 1] = 0;
+                positions[i * 3 + 2] = 0;
+                sizes[i] = Math.random() * 2;
+                randomness[i] = Math.random();
             }
-        }
-    </script>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-
-        // --- 1. 初始化 Three.js 场景 ---
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 5;
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        document.getElementById('canvas-container').appendChild(renderer.domElement);
-
-        // 后期处理：辉光
-        const composer = new EffectComposer(renderer);
-        composer.addPass(new RenderPass(scene, camera));
-        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-        composer.addPass(bloomPass);
-
-        // --- 2. 粒子系统设计 ---
-        const particleCount = 3000;
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        const velocities = [];
-        const life = new Float32Array(particleCount);
-
-        for (let i = 0; i < particleCount; i++) {
-            velocities.push(new THREE.Vector3());
-            life[i] = Math.random();
-        }
-
-        const material = new THREE.PointsMaterial({
-            size: 0.04,
-            vertexColors: true,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-
-        const portalParticles = new THREE.Points(geometry, material);
-        scene.add(portalParticles);
-
-        // --- 3. 核心逻辑变量 ---
-        let targetRadius = 0; // 初始关闭
-        let currentRadius = 0;
-        let rotationSpeed = 0.05;
-        let lastFingerAngle = null;
-        const handPos = new THREE.Vector3(-999, -999, 0); // 存储右手食指位置
-
-        // --- 4. 集成 MediaPipe 手势识别 ---
-        // 动态加载 MediaPipe 脚本
-        async function setupMediaPipe() {
-            const video = document.getElementById('video-input');
-            const status = document.getElementById('status');
-
-            // 注意：此处需要加载 MediaPipe Hands 的 CDN 资源
-            const { Hands, HAND_CONNECTIONS } = window; // 这里假设通过全局加载或动态 import
-
-            // 为简化演示，我们使用常用的手势逻辑库
-            // 提示：平板上推荐使用 MediaPipe Hands 的标准初始化
-        }
-
-        // 模拟粒子更新逻辑 (这部分会由手势触发)
-        function updatePortalPhysics() {
-            const posAttr = geometry.getAttribute('position');
-            const colAttr = geometry.getAttribute('color');
-            
-            // 平滑过渡半径
-            currentRadius += (targetRadius - currentRadius) * 0.1;
-
-            for (let i = 0; i < particleCount; i++) {
-                let ix = i * 3;
-                
-                // 粒子逻辑：环绕运动 + 随机溅射
-                if (life[i] <= 0) {
-                    const angle = Math.random() * Math.PI * 2;
-                    positions[ix] = Math.cos(angle) * currentRadius;
-                    positions[ix+1] = Math.sin(angle) * currentRadius;
-                    positions[ix+2] = (Math.random() - 0.5) * 0.5;
-                    life[i] = 1.0;
-                } else {
-                    const angle = Math.atan2(positions[ix+1], positions[ix]) + rotationSpeed;
-                    const r = currentRadius + (Math.random() - 0.5) * 0.2;
-                    
-                    positions[ix] = Math.cos(angle) * r;
-                    positions[ix+1] = Math.sin(angle) * r;
-                    life[i] -= 0.01 * Math.random();
-                }
-
-                // 碰撞反馈：如果粒子靠近手部位置，产生推开效果
-                const pPos = new THREE.Vector3(positions[ix], positions[ix+1], positions[ix+2]);
-                if (pPos.distanceTo(handPos) < 0.8) {
-                    const dir = pPos.sub(handPos).normalize();
-                    positions[ix] += dir.x * 0.1;
-                    positions[ix+1] += dir.y * 0.1;
-                    colors[ix] = 1; colors[ix+1] = 1; colors[ix+2] = 1; // 撞击变白
-                } else {
-                    // 默认橙金色调
-                    colors[ix] = 1.0; 
-                    colors[ix+1] = 0.5 + Math.random() * 0.3; 
-                    colors[ix+2] = 0.1;
-                }
-            }
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.15,
+                color: portalColor,
+                transparent: true,
+                opacity: 0,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
         }
 
-        // --- 5. 手势控制接口 (由摄像头识别结果调用) ---
-        window.handleGestures = (leftHandClosed, rightFingerPos, isRotating) => {
-            // 1. 左手控制关闭
-            if (leftHandClosed) targetRadius = 0;
-            
-            // 2. 右手食指控制开启
-            if (rightFingerPos) {
-                // 将屏幕坐标转换为 Three.js 坐标
-                handPos.x = (rightFingerPos.x - 0.5) * 10;
-                handPos.y = -(rightFingerPos.y - 0.5) * 10;
-                
-                if (isRotating) {
-                    targetRadius = 2.0; // 开启传送门
-                    rotationSpeed = 0.15; // 加速旋转
-                } else {
-                    rotationSpeed = 0.05;
-                }
-            } else {
-                handPos.set(-999, -999, 0);
-            }
-        };
+        // 核心：计算传送门圆环坐标
+        function updatePortalGeometry() {
+            const positions = geometry.attributes.position.array;
+            const time = Date.now() * 0.005;
 
-        // 渲染循环
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const angle = (i / PARTICLE_COUNT) * Math.PI * 2 + time * 0.2;
+                const radius = 6 + (Math.random() - 0.5) * 1.5; // 圆环厚度
+                
+                // 基础圆环位置
+                let x = Math.cos(angle) * radius;
+                let y = Math.sin(angle) * radius;
+                let z = (Math.random() - 0.5) * 1.0;
+
+                // 如果食指中指伸出，增加扰动 (Perturbation)
+                if (portalState.perturbation > 0.5) {
+                    x += Math.sin(time + i) * 0.5;
+                    y += Math.cos(time + i) * 0.5;
+                    z += Math.tan(time * 0.1) * 0.2;
+                }
+
+                positions[i * 3] = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+            }
+            geometry.attributes.position.needsUpdate = true;
+        }
+
+        function initHands() {
+            const videoElement = document.getElementById('input-video');
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            
+            hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const lm = results.multiHandLandmarks[0];
+                    
+                    // 1. 检测手指是否全部张开 (比较指尖和指根距离)
+                    const isFist = lm[8].y > lm[6].y && lm[12].y > lm[10].y && lm[16].y > lm[14].y && lm[20].y > lm[18].y;
+                    
+                    // 2. 检测食指和中指是否单独伸出 (用于扰动)
+                    const isPeace = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y;
+
+                    // 3. 计算手掌旋转角度 (利用大拇指 4 到小拇指 20 的向量)
+                    const angle = Math.atan2(lm[20].y - lm[4].y, lm[20].x - lm[4].x);
+
+                    // 状态更新
+                    if (!isFist) {
+                        portalState.visible = true;
+                        particles.material.opacity = THREE.MathUtils.lerp(particles.material.opacity, 1.0, 0.1);
+                        particles.rotation.z = angle; // 传送门随手旋转
+                        portalState.perturbation = isPeace ? 1.0 : 0.0;
+                    } else {
+                        particles.material.opacity = THREE.MathUtils.lerp(particles.material.opacity, 0.0, 0.1);
+                        portalState.perturbation = 0;
+                    }
+
+                    // 4. 传送门中心跟随手掌
+                    const centerX = (lm[9].x - 0.5) * -40; // 映射到场景坐标
+                    const centerY = (lm[9].y - 0.5) * -30;
+                    particles.position.set(centerX, centerY, 0);
+
+                } else {
+                    particles.material.opacity = THREE.MathUtils.lerp(particles.material.opacity, 0.0, 0.1);
+                }
+            });
+
+            const cameraPipe = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            cameraPipe.start();
+        }
+
         function animate() {
             requestAnimationFrame(animate);
-            updatePortalPhysics();
-            composer.render();
+            if (particles.material.opacity > 0.01) {
+                updatePortalGeometry();
+            }
+            renderer.render(scene, camera);
         }
 
-        // 初始化
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
         });
 
+        initThree();
+        initHands();
         animate();
-        document.getElementById('status').innerText = "3D 引擎准备就绪。请接入 MediaPipe 接口或点击屏幕模拟开启。";
-        
-        // 临时点击模拟（方便你在没配好摄像头时测试）
-        window.onclick = () => { targetRadius = targetRadius === 0 ? 2 : 0; };
-
     </script>
 </body>
 </html>
+
 
 
 
