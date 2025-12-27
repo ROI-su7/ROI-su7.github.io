@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediaPipe 手势贪吃蛇</title>
+    <title>MediaPipe 双手贪吃蛇</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
@@ -14,17 +14,16 @@
             overflow: hidden;
             background: #000;
             font-family: 'Arial', sans-serif;
+            cursor: none; /* 隐藏鼠标，沉浸式体验 */
         }
         #container {
             position: relative;
             width: 100vw;
             height: 100vh;
         }
-        /* 视频隐藏，只作为数据源 */
         #input_video {
             display: none;
         }
-        /* 画布覆盖全屏 */
         #output_canvas {
             position: absolute;
             top: 0;
@@ -32,16 +31,23 @@
             width: 100%;
             height: 100%;
         }
-        /* UI 层 */
         #ui {
             position: absolute;
             top: 20px;
-            left: 20px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
             color: white;
             font-size: 24px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
             pointer-events: none;
             z-index: 10;
+        }
+        .score-display {
+            padding: 10px 20px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 8px;
         }
         #loading {
             position: absolute;
@@ -59,7 +65,10 @@
 <div id="container">
     <video id="input_video"></video>
     <canvas id="output_canvas"></canvas>
-    <div id="ui">分数: <span id="score">0</span></div>
+    <div id="ui">
+        <div class="score-display">玩家 1 (左手): <span id="score1">0</span></div>
+        <div class="score-display">玩家 2 (右手): <span id="score2">0</span></div>
+    </div>
     <div id="loading">正在加载 AI 模型，请稍候...</div>
 </div>
 
@@ -67,128 +76,209 @@
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
-    const scoreElement = document.getElementById('score');
+    const score1Element = document.getElementById('score1');
+    const score2Element = document.getElementById('score2');
     const loadingElement = document.getElementById('loading');
 
     // --- 游戏配置 ---
-    let score = 0;
-    let apple = { x: 0.5, y: 0.5, radius: 15 };
-    
-    // 蛇的逻辑
-    // snakePath 存储头部的移动轨迹，用于实现平滑拖尾
-    let snakePath = []; 
-    const pathMaxLength = 500; // 轨迹最大长度
-    let snakeLength = 5; // 初始蛇段数
-    const segmentInterval = 6; // 身体节段在路径中的间隔（控制节段间距）
+    const INITIAL_SNAKE_LENGTH = 5; // 初始蛇段数
+    const PATH_MAX_LENGTH = 500;    // 轨迹最大长度
+    const SEGMENT_INTERVAL = 6;     // 身体节段在路径中的间隔
+    const APPLE_RADIUS = 15;        // 苹果半径
+    const COLLISION_THRESHOLD = 30; // 碰撞检测阈值
 
-    function initApple() {
-        apple.x = Math.random() * 0.8 + 0.1;
-        apple.y = Math.random() * 0.8 + 0.1;
+    // 蛇的定义
+    class Snake {
+        constructor(id, colorHue) {
+            this.id = id; // 1 or 2
+            this.score = 0;
+            this.snakePath = []; // 存储头部的移动轨迹
+            this.snakeLength = INITIAL_SNAKE_LENGTH;
+            this.apple = { x: 0, y: 0, radius: APPLE_RADIUS };
+            this.colorHue = colorHue; // 用于彩虹色起始值
+            this.initApple();
+        }
+
+        initApple() {
+            this.apple.x = Math.random() * 0.8 + 0.1;
+            this.apple.y = Math.random() * 0.8 + 0.1;
+        }
+
+        resetLength() {
+            this.snakeLength = INITIAL_SNAKE_LENGTH;
+        }
+
+        updateScore(points) {
+            this.score += points;
+            if (this.id === 1) score1Element.innerText = this.score;
+            else score2Element.innerText = this.score;
+        }
+
+        draw(canvasCtx, canvasWidth, canvasHeight, currentTime) {
+            // 绘制苹果
+            const ax = canvasWidth - (this.apple.x * canvasWidth); // 镜像位置
+            const ay = this.apple.y * canvasHeight;
+            
+            canvasCtx.beginPath();
+            canvasCtx.arc(ax, ay, this.apple.radius, 0, Math.PI * 2);
+            canvasCtx.fillStyle = '#ff4d4d'; // 红色苹果
+            canvasCtx.fill();
+            canvasCtx.shadowBlur = 15;
+            canvasCtx.shadowColor = "red";
+            canvasCtx.strokeStyle = "white";
+            canvasCtx.lineWidth = 2;
+            canvasCtx.stroke();
+            canvasCtx.shadowBlur = 0;
+            canvasCtx.closePath();
+
+            if (this.snakePath.length === 0) return;
+
+            // 绘制身体节段
+            for (let i = 0; i < this.snakeLength; i++) {
+                const pathIndex = i * SEGMENT_INTERVAL;
+                if (pathIndex < this.snakePath.length) {
+                    const pos = this.snakePath[pathIndex];
+                    const size = Math.max(8, 20 - i * 0.4); // 尾部变细
+                    
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+                    
+                    // 彩虹色渐变效果
+                    const hue = (currentTime / 10 + i * 10 + this.colorHue) % 360;
+                    canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+                    
+                    canvasCtx.fill();
+                    canvasCtx.closePath();
+                }
+            }
+
+            // 绘制蛇头（眼睛）
+            const head = this.snakePath[0];
+            canvasCtx.fillStyle = "white";
+            canvasCtx.beginPath();
+            canvasCtx.arc(head.x - 8, head.y - 8, 4, 0, Math.PI * 2);
+            canvasCtx.arc(head.x + 8, head.y - 8, 4, 0, Math.PI * 2);
+            canvasCtx.fill();
+        }
     }
+
+    const snake1 = new Snake(1, 0);   // 玩家1，起始色相0 (红色系)
+    const snake2 = new Snake(2, 180); // 玩家2，起始色相180 (青色系)
 
     // --- MediaPipe 处理 ---
     function onResults(results) {
-        // 隐藏加载提示
         if (loadingElement) loadingElement.style.display = 'none';
 
-        // 1. 准备画布
-        canvasElement.width = window.innerWidth;
-        canvasElement.height = window.innerHeight;
+        const canvasWidth = window.innerWidth;
+        const canvasHeight = window.innerHeight;
+        canvasElement.width = canvasWidth;
+        canvasElement.height = canvasHeight;
         
         canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-        // 2. 绘制镜像视频背景
-        canvasCtx.translate(canvasElement.width, 0);
+        // 绘制镜像视频背景
+        canvasCtx.translate(canvasWidth, 0);
         canvasCtx.scale(-1, 1);
-        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasWidth, canvasHeight);
         canvasCtx.restore();
 
-        // 3. 逻辑处理：获取指尖坐标
+        let hand1Data = null; // 用于存储左手数据
+        let hand2Data = null; // 用于存储右手数据
+
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const hand = results.multiHandLandmarks[0];
-            // 指尖坐标 (Index Finger Tip is Landmark 8)
-            // 考虑镜像：1 - x
-            const headX = (1 - hand[8].x) * canvasElement.width;
-            const headY = hand[8].y * canvasElement.height;
+            results.multiHandLandmarks.forEach((hand, index) => {
+                // 根据 handedness (惯用手) 来区分左右手
+                // 注意：这里 MediaPipe 识别的 handedness 是基于摄像头视角的，
+                // 经过镜像翻转后，画面左边的是摄像头的右手，画面右边的是摄像头的左手。
+                // 所以我们将摄像头识别的 'Right' 对应为屏幕左侧的 P1 (玩家的左手)，'Left' 对应屏幕右侧的 P2 (玩家的右手)。
+                const handedness = results.multiHandedness[index][0].label;
+                
+                // 获取指尖坐标 (Index Finger Tip is Landmark 8)
+                // 考虑镜像：1 - x
+                const headX = (1 - hand[8].x) * canvasWidth;
+                const headY = hand[8].y * canvasHeight;
 
-            // 更新路径
-            snakePath.unshift({ x: headX, y: headY });
-            if (snakePath.length > pathMaxLength) snakePath.pop();
-
-            // 碰撞检测（食指与苹果）
-            const appleCanvasX = (1 - apple.x) * canvasElement.width; // 同样处理苹果的镜像绘制
-            const dist = Math.hypot(headX - (canvasElement.width - apple.x * canvasElement.width), headY - apple.y * canvasElement.height);
-            
-            // 因为苹果坐标是基于 0-1 的比例，我们直接转换比较
-            const ax = apple.x * canvasElement.width;
-            const ay = apple.y * canvasElement.height;
-            // 注意：由于视频镜像绘制，食指在左边其实对应的是摄像头的右边，
-            // 简单处理：将手势坐标转为 Canvas 坐标后，直接在 Canvas 空间判断。
-            const realDist = Math.hypot(headX - (canvasElement.width - ax), headY - ay);
-
-            if (realDist < 30) {
-                score += 10;
-                scoreElement.innerText = score;
-                snakeLength += 2; // 变长
-                initApple();
-            }
+                if (handedness === 'Right') { // MediaPipe 识别为 Right Hand (通常是屏幕左边的手) -> 玩家1
+                    hand1Data = { headX, headY, hand };
+                } else if (handedness === 'Left') { // MediaPipe 识别为 Left Hand (通常是屏幕右边的手) -> 玩家2
+                    hand2Data = { headX, headY, hand };
+                }
+            });
         }
 
-        // 4. 绘制苹果
-        drawApple();
+        // --- 更新蛇的路径和碰撞检测 ---
+        const updateSnake = (snake, data) => {
+            if (data) {
+                snake.snakePath.unshift({ x: data.headX, y: data.headY });
+                if (snake.snakePath.length > PATH_MAX_LENGTH) snake.snakePath.pop();
 
-        // 5. 绘制蛇身（平滑拖尾）
-        drawSnake();
-    }
+                // 碰撞检测：蛇头碰苹果
+                const appleCanvasX = canvasWidth - (snake.apple.x * canvasWidth); // 苹果镜像坐标
+                const distToApple = Math.hypot(data.headX - appleCanvasX, data.headY - snake.apple.y * canvasHeight);
 
-    function drawApple() {
-        const x = canvasElement.width - (apple.x * canvasElement.width); // 镜像位置
-        const y = apple.y * canvasElement.height;
+                if (distToApple < COLLISION_THRESHOLD) {
+                    snake.updateScore(10);
+                    snake.snakeLength += 2;
+                    snake.initApple();
+                }
+            } else {
+                // 如果没有检测到手，清空路径，防止蛇残留
+                snake.snakePath = [];
+            }
+        };
+
+        updateSnake(snake1, hand1Data);
+        updateSnake(snake2, hand2Data);
+
+        // --- 蛇头互碰检测 ---
+        if (hand1Data && hand2Data) {
+            const head1 = snake1.snakePath[0];
+            const head2 = snake2.snakePath[0];
+            if (head1 && head2) {
+                const headToHeadDist = Math.hypot(head1.x - head2.x, head1.y - head2.y);
+                if (headToHeadDist < COLLISION_THRESHOLD * 1.5) { // 稍微扩大碰撞体积
+                    // 谁撞了谁，或者同时撞？这里简化为双方都重置
+                    snake1.resetLength();
+                    snake2.resetLength();
+                    console.log("两蛇头相撞，双方重置！");
+                }
+            }
+        }
         
-        canvasCtx.beginPath();
-        canvasCtx.arc(x, y, apple.radius, 0, Math.PI * 2);
-        canvasCtx.fillStyle = '#ff4d4d';
-        canvasCtx.fill();
-        // 给苹果加个光晕
-        canvasCtx.shadowBlur = 15;
-        canvasCtx.shadowColor = "red";
-        canvasCtx.strokeStyle = "white";
-        canvasCtx.lineWidth = 2;
-        canvasCtx.stroke();
-        canvasCtx.shadowBlur = 0;
-        canvasCtx.closePath();
-    }
-
-    function drawSnake() {
-        if (snakePath.length === 0) return;
-
-        // 绘制身体节段
-        for (let i = 0; i < snakeLength; i++) {
-            const pathIndex = i * segmentInterval;
-            if (pathIndex < snakePath.length) {
-                const pos = snakePath[pathIndex];
-                const size = Math.max(10, 25 - i * 0.5); // 尾部变细
-                
-                canvasCtx.beginPath();
-                canvasCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
-                
-                // 彩虹色渐变效果
-                const hue = (Date.now() / 10 + i * 10) % 360;
-                canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
-                
-                canvasCtx.fill();
-                canvasCtx.closePath();
+        // --- 蛇头碰对方身体检测 ---
+        const checkHeadBodyCollision = (headSnake, bodySnake) => {
+            if (!headSnake.snakePath.length || !bodySnake.snakePath.length) return false;
+            
+            const headPos = headSnake.snakePath[0];
+            for (let i = SEGMENT_INTERVAL * 2; i < bodySnake.snakeLength; i++) { // 从身体第三节开始检测，避免刚出生就碰撞
+                const bodySegmentIndex = i * SEGMENT_INTERVAL;
+                if (bodySegmentIndex < bodySnake.snakePath.length) {
+                    const bodyPos = bodySnake.snakePath[bodySegmentIndex];
+                    const dist = Math.hypot(headPos.x - bodyPos.x, headPos.y - bodyPos.y);
+                    if (dist < COLLISION_THRESHOLD) {
+                        return true;
+                    }
+                }
             }
+            return false;
+        };
+
+        // 玩家1的头碰玩家2的身体
+        if (checkHeadBodyCollision(snake1, snake2)) {
+            snake1.resetLength();
+            console.log("玩家1撞到玩家2身体，玩家1重置！");
+        }
+        // 玩家2的头碰玩家1的身体
+        if (checkHeadBodyCollision(snake2, snake1)) {
+            snake2.resetLength();
+            console.log("玩家2撞到玩家1身体，玩家2重置！");
         }
 
-        // 绘制蛇头（眼睛）
-        const head = snakePath[0];
-        canvasCtx.fillStyle = "white";
-        canvasCtx.beginPath();
-        canvasCtx.arc(head.x - 8, head.y - 8, 5, 0, Math.PI * 2);
-        canvasCtx.arc(head.x + 8, head.y - 8, 5, 0, Math.PI * 2);
-        canvasCtx.fill();
+        // --- 绘制所有元素 ---
+        const currentTime = Date.now();
+        snake1.draw(canvasCtx, canvasWidth, canvasHeight, currentTime);
+        snake2.draw(canvasCtx, canvasWidth, canvasHeight, currentTime);
     }
 
     // --- 初始化 MediaPipe Hands ---
@@ -199,7 +289,7 @@
     });
 
     hands.setOptions({
-        maxNumHands: 1,
+        maxNumHands: 2, // 关键：设置为2，检测两只手
         modelComplexity: 1,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5
@@ -216,7 +306,6 @@
         height: 720
     });
 
-    initApple();
     camera.start();
 
     // 窗口大小适配
@@ -228,6 +317,7 @@
 
 </body>
 </html>
+
 
 
 
