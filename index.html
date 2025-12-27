@@ -2,177 +2,233 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Doctor Strange Magic Shield</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe 手势贪吃蛇</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
-        #canvas-container { width: 100vw; height: 100vh; }
-        #video-preview { 
-            position: absolute; top: 20px; right: 20px; 
-            width: 140px; height: 100px; border-radius: 8px; 
-            border: 1px solid #ff9800; transform: scaleX(-1);
-            background: #111; z-index: 10;
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Arial', sans-serif;
         }
-        .ui-tips {
-            position: absolute; bottom: 30px; width: 100%;
-            text-align: center; color: #ff9800; font-family: sans-serif;
-            pointer-events: none; text-shadow: 0 0 8px rgba(255,100,0,0.8);
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        /* 视频隐藏，只作为数据源 */
+        #input_video {
+            display: none;
+        }
+        /* 画布覆盖全屏 */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        /* UI 层 */
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+            z-index: 10;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
 
-    <div id="canvas-container"></div>
-    <video id="video-preview" playsinline autoplay muted></video>
+<div id="container">
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+    <div id="ui">分数: <span id="score">0</span></div>
+    <div id="loading">正在加载 AI 模型，请稍候...</div>
+</div>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const loadingElement = document.getElementById('loading');
+
+    // --- 游戏配置 ---
+    let score = 0;
+    let apple = { x: 0.5, y: 0.5, radius: 15 };
     
-    <div class="ui-tips">
-        五指张开：召唤法阵 | 握拳：隐藏<br>
-        旋转手掌：控制符文转动 | 伸出双指：法阵共鸣
-    </div>
+    // 蛇的逻辑
+    // snakePath 存储头部的移动轨迹，用于实现平滑拖尾
+    let snakePath = []; 
+    const pathMaxLength = 500; // 轨迹最大长度
+    let snakeLength = 5; // 初始蛇段数
+    const segmentInterval = 6; // 身体节段在路径中的间隔（控制节段间距）
 
-    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    function initApple() {
+        apple.x = Math.random() * 0.8 + 0.1;
+        apple.y = Math.random() * 0.8 + 0.1;
+    }
 
-    <script>
-        let scene, camera, renderer, magicGroup;
-        let isPortalActive = false;
-        let portalOpacity = 0;
+    // --- MediaPipe 处理 ---
+    function onResults(results) {
+        // 隐藏加载提示
+        if (loadingElement) loadingElement.style.display = 'none';
 
-        function initThree() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 15;
+        // 1. 准备画布
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.getElementById('canvas-container').appendChild(renderer.domElement);
+        // 2. 绘制镜像视频背景
+        canvasCtx.translate(canvasElement.width, 0);
+        canvasCtx.scale(-1, 1);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.restore();
 
-            // 创建法阵组合
-            magicGroup = new THREE.Group();
-            scene.add(magicGroup);
+        // 3. 逻辑处理：获取指尖坐标
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const hand = results.multiHandLandmarks[0];
+            // 指尖坐标 (Index Finger Tip is Landmark 8)
+            // 考虑镜像：1 - x
+            const headX = (1 - hand[8].x) * canvasElement.width;
+            const headY = hand[8].y * canvasElement.height;
 
-            // 1. 主圆环
-            const ringGeom = new THREE.TorusGeometry(5, 0.05, 16, 100);
-            const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0 });
-            const mainRing = new THREE.Mesh(ringGeom, ringMat);
-            magicGroup.add(mainRing);
+            // 更新路径
+            snakePath.unshift({ x: headX, y: headY });
+            if (snakePath.length > pathMaxLength) snakePath.pop();
 
-            // 2. 内部几何几何符文 (用十二边形模拟)
-            const polyGeom = new THREE.CircleGeometry(4.8, 12);
-            const polyEdges = new THREE.EdgesGeometry(polyGeom);
-            const polyLine = new THREE.LineSegments(polyEdges, new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0 }));
-            magicGroup.add(polyLine);
-
-            // 3. 粒子火花层 (核心发光感)
-            const pCount = 2000;
-            const pGeom = new THREE.BufferGeometry();
-            const pPos = new Float32Array(pCount * 3);
-            for(let i=0; i<pCount; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const r = 4.8 + Math.random() * 0.5;
-                pPos[i*3] = Math.cos(angle) * r;
-                pPos[i*3+1] = Math.sin(angle) * r;
-                pPos[i*3+2] = (Math.random() - 0.5) * 0.5;
-            }
-            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            const pMat = new THREE.PointsMaterial({ 
-                size: 0.08, 
-                color: 0xffcc00, 
-                transparent: true, 
-                opacity: 0, 
-                blending: THREE.AdditiveBlending 
-            });
-            const sparks = new THREE.Points(pGeom, pMat);
-            magicGroup.add(sparks);
-        }
-
-        function initHands() {
-            const videoElement = document.getElementById('video-preview');
-            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            // 碰撞检测（食指与苹果）
+            const appleCanvasX = (1 - apple.x) * canvasElement.width; // 同样处理苹果的镜像绘制
+            const dist = Math.hypot(headX - (canvasElement.width - apple.x * canvasElement.width), headY - apple.y * canvasElement.height);
             
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
+            // 因为苹果坐标是基于 0-1 的比例，我们直接转换比较
+            const ax = apple.x * canvasElement.width;
+            const ay = apple.y * canvasElement.height;
+            // 注意：由于视频镜像绘制，食指在左边其实对应的是摄像头的右边，
+            // 简单处理：将手势坐标转为 Canvas 坐标后，直接在 Canvas 空间判断。
+            const realDist = Math.hypot(headX - (canvasElement.width - ax), headY - ay);
 
-            hands.onResults((results) => {
-                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const lm = results.multiHandLandmarks[0];
-                    
-                    // 判断手掌状态：计算指尖与指根距离
-                    const d8 = Math.hypot(lm[8].x - lm[5].x, lm[8].y - lm[5].y);
-                    const isFist = d8 < 0.08; // 距离近则为握拳
-                    
-                    // 判断食指中指 (用于粒子扰动效果)
-                    const isPeace = (lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y);
-
-                    // 1. 设置目标透明度
-                    const targetOpacity = isFist ? 0 : 1;
-                    portalOpacity = THREE.MathUtils.lerp(portalOpacity, targetOpacity, 0.15);
-
-                    // 2. 更新法阵位置与旋转
-                    const x = (lm[9].x - 0.5) * -30;
-                    const y = (lm[9].y - 0.5) * -20;
-                    magicGroup.position.set(x, y, 0);
-
-                    // 计算手掌偏转角度
-                    const angle = Math.atan2(lm[17].y - lm[5].y, lm[17].x - lm[5].x);
-                    magicGroup.rotation.z = angle + Math.PI/2;
-
-                    // 如果检测到“剪刀手”，让法阵抖动
-                    if(isPeace) {
-                        magicGroup.position.x += (Math.random()-0.5) * 0.5;
-                        magicGroup.position.y += (Math.random()-0.5) * 0.5;
-                    }
-
-                    // 应用透明度到所有子物体
-                    magicGroup.children.forEach(obj => {
-                        obj.material.opacity = portalOpacity;
-                    });
-
-                } else {
-                    // 没检测到手，慢慢消失
-                    portalOpacity = THREE.MathUtils.lerp(portalOpacity, 0, 0.1);
-                    magicGroup.children.forEach(obj => {
-                        obj.material.opacity = portalOpacity;
-                    });
-                }
-            });
-
-            const camera = new Camera(videoElement, {
-                onFrame: async () => { await hands.send({image: videoElement}); },
-                width: 640, height: 480
-            });
-            camera.start();
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            // 法阵自身的微弱自动旋转
-            if (portalOpacity > 0.01) {
-                magicGroup.children[1].rotation.z += 0.01; // 线框旋转
-                magicGroup.children[2].rotation.z -= 0.005; // 粒子反向转
+            if (realDist < 30) {
+                score += 10;
+                scoreElement.innerText = score;
+                snakeLength += 2; // 变长
+                initApple();
             }
-
-            renderer.render(scene, camera);
         }
 
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        // 4. 绘制苹果
+        drawApple();
 
-        initThree();
-        initHands();
-        animate();
-    </script>
+        // 5. 绘制蛇身（平滑拖尾）
+        drawSnake();
+    }
+
+    function drawApple() {
+        const x = canvasElement.width - (apple.x * canvasElement.width); // 镜像位置
+        const y = apple.y * canvasElement.height;
+        
+        canvasCtx.beginPath();
+        canvasCtx.arc(x, y, apple.radius, 0, Math.PI * 2);
+        canvasCtx.fillStyle = '#ff4d4d';
+        canvasCtx.fill();
+        // 给苹果加个光晕
+        canvasCtx.shadowBlur = 15;
+        canvasCtx.shadowColor = "red";
+        canvasCtx.strokeStyle = "white";
+        canvasCtx.lineWidth = 2;
+        canvasCtx.stroke();
+        canvasCtx.shadowBlur = 0;
+        canvasCtx.closePath();
+    }
+
+    function drawSnake() {
+        if (snakePath.length === 0) return;
+
+        // 绘制身体节段
+        for (let i = 0; i < snakeLength; i++) {
+            const pathIndex = i * segmentInterval;
+            if (pathIndex < snakePath.length) {
+                const pos = snakePath[pathIndex];
+                const size = Math.max(10, 25 - i * 0.5); // 尾部变细
+                
+                canvasCtx.beginPath();
+                canvasCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+                
+                // 彩虹色渐变效果
+                const hue = (Date.now() / 10 + i * 10) % 360;
+                canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+                
+                canvasCtx.fill();
+                canvasCtx.closePath();
+            }
+        }
+
+        // 绘制蛇头（眼睛）
+        const head = snakePath[0];
+        canvasCtx.fillStyle = "white";
+        canvasCtx.beginPath();
+        canvasCtx.arc(head.x - 8, head.y - 8, 5, 0, Math.PI * 2);
+        canvasCtx.arc(head.x + 8, head.y - 8, 5, 0, Math.PI * 2);
+        canvasCtx.fill();
+    }
+
+    // --- 初始化 MediaPipe Hands ---
+    const hands = new Hands({
+        locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }
+    });
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    // --- 启动摄像头 ---
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({ image: videoElement });
+        },
+        width: 1280,
+        height: 720
+    });
+
+    initApple();
+    camera.start();
+
+    // 窗口大小适配
+    window.addEventListener('resize', () => {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    });
+</script>
+
 </body>
 </html>
+
 
 
 
