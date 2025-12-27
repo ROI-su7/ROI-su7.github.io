@@ -2,185 +2,233 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MediaPipe 双手贪吃蛇 - 优化版</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe 手势贪吃蛇</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
-        #input_video { display: none; }
-        #output_canvas { width: 100%; height: 100%; object-fit: cover; }
-        #ui { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; pointer-events: none; z-index: 10; }
-        .score-display { padding: 10px 20px; background: rgba(0, 0, 0, 0.6); color: white; border-radius: 20px; font-size: 20px; border: 1px solid rgba(255,255,255,0.2); }
-        #loading { position: absolute; color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; z-index: 100; }
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Arial', sans-serif;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        /* 视频隐藏，只作为数据源 */
+        #input_video {
+            display: none;
+        }
+        /* 画布覆盖全屏 */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        /* UI 层 */
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+            z-index: 10;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
 
 <div id="container">
-    <div id="loading">初始化 AI 模型中... (如长时间无响应请刷新)</div>
-    <video id="input_video" playsinline></video>
+    <video id="input_video"></video>
     <canvas id="output_canvas"></canvas>
-    <div id="ui">
-        <div class="score-display">P1: <span id="score1">0</span></div>
-        <div class="score-display">P2: <span id="score2">0</span></div>
-    </div>
+    <div id="ui">分数: <span id="score">0</span></div>
+    <div id="loading">正在加载 AI 模型，请稍候...</div>
 </div>
 
 <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const scoreElement = document.getElementById('score');
     const loadingElement = document.getElementById('loading');
 
-    // --- 游戏核心逻辑 ---
-    class Snake {
-        constructor(id, hue) {
-            this.id = id;
-            this.path = [];
-            this.length = 10;
-            this.score = 0;
-            this.hue = hue;
-            this.apple = { x: Math.random(), y: Math.random() };
-        }
-        reset() { this.length = 10; }
+    // --- 游戏配置 ---
+    let score = 0;
+    let apple = { x: 0.5, y: 0.5, radius: 15 };
+    
+    // 蛇的逻辑
+    // snakePath 存储头部的移动轨迹，用于实现平滑拖尾
+    let snakePath = []; 
+    const pathMaxLength = 500; // 轨迹最大长度
+    let snakeLength = 5; // 初始蛇段数
+    const segmentInterval = 6; // 身体节段在路径中的间隔（控制节段间距）
+
+    function initApple() {
+        apple.x = Math.random() * 0.8 + 0.1;
+        apple.y = Math.random() * 0.8 + 0.1;
     }
 
-    const p1 = new Snake(1, 0);   // 红色系
-    const p2 = new Snake(2, 200); // 蓝色系
-    const SEGMENT_DIST = 5;       // 身体节段采样间隔
-
+    // --- MediaPipe 处理 ---
     function onResults(results) {
-        if (loadingElement.style.display !== 'none') loadingElement.style.display = 'none';
+        // 隐藏加载提示
+        if (loadingElement) loadingElement.style.display = 'none';
 
-        // 动态适配画布分辨率（仅在窗口变化时）
-        if (canvasElement.width !== videoElement.videoWidth) {
-            canvasElement.width = videoElement.videoWidth || 1280;
-            canvasElement.height = videoElement.videoHeight || 720;
-        }
-
-        const w = canvasElement.width;
-        const h = canvasElement.height;
-
+        // 1. 准备画布
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        
         canvasCtx.save();
-        // 1. 绘制背景视频 (镜像)
-        canvasCtx.clearRect(0, 0, w, h);
-        canvasCtx.translate(w, 0);
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+        // 2. 绘制镜像视频背景
+        canvasCtx.translate(canvasElement.width, 0);
         canvasCtx.scale(-1, 1);
-        canvasCtx.drawImage(results.image, 0, 0, w, h);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.restore();
 
-        // 2. 识别数据分配
-        let handsFound = { p1: null, p2: null };
-        if (results.multiHandLandmarks && results.multiHandedness) {
-            results.multiHandLandmarks.forEach((landmarks, index) => {
-                const label = results.multiHandedness[index].label; 
-                // MediaPipe Label 'Left'/'Right' 是原始视角的，镜像后反转
-                const isP1 = label === 'Right'; 
-                const target = isP1 ? p1 : p2;
-                
-                // 坐标转换 (考虑镜像 1-x)
-                const tip = landmarks[8];
-                const posX = (1 - tip.x) * w;
-                const posY = tip.y * h;
-                
-                target.path.unshift({ x: posX, y: posY });
-                if (target.path.length > 300) target.path.pop();
-                handsFound[isP1 ? 'p1' : 'p2'] = { x: posX, y: posY };
-            });
-        }
+        // 3. 逻辑处理：获取指尖坐标
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const hand = results.multiHandLandmarks[0];
+            // 指尖坐标 (Index Finger Tip is Landmark 8)
+            // 考虑镜像：1 - x
+            const headX = (1 - hand[8].x) * canvasElement.width;
+            const headY = hand[8].y * canvasElement.height;
 
-        // 3. 逻辑运算 (吃苹果、碰撞)
-        [p1, p2].forEach(s => {
-            if (s.path.length === 0) return;
-            const head = s.path[0];
-            const ax = (1 - s.apple.x) * w;
-            const ay = s.apple.y * h;
+            // 更新路径
+            snakePath.unshift({ x: headX, y: headY });
+            if (snakePath.length > pathMaxLength) snakePath.pop();
 
-            // 吃苹果
-            if (Math.hypot(head.x - ax, head.y - ay) < 40) {
-                s.score += 10;
-                s.length += 5;
-                s.apple = { x: Math.random() * 0.8 + 0.1, y: Math.random() * 0.8 + 0.1 };
-                document.getElementById(`score${s.id}`).innerText = s.score;
-            }
+            // 碰撞检测（食指与苹果）
+            const appleCanvasX = (1 - apple.x) * canvasElement.width; // 同样处理苹果的镜像绘制
+            const dist = Math.hypot(headX - (canvasElement.width - apple.x * canvasElement.width), headY - apple.y * canvasElement.height);
             
-            // 绘制苹果
-            canvasCtx.beginPath();
-            canvasCtx.arc(ax, ay, 15, 0, Math.PI*2);
-            canvasCtx.fillStyle = `hsl(${s.hue}, 100%, 50%)`;
-            canvasCtx.fill();
-            canvasCtx.strokeStyle = "white";
-            canvasCtx.stroke();
-        });
+            // 因为苹果坐标是基于 0-1 的比例，我们直接转换比较
+            const ax = apple.x * canvasElement.width;
+            const ay = apple.y * canvasElement.height;
+            // 注意：由于视频镜像绘制，食指在左边其实对应的是摄像头的右边，
+            // 简单处理：将手势坐标转为 Canvas 坐标后，直接在 Canvas 空间判断。
+            const realDist = Math.hypot(headX - (canvasElement.width - ax), headY - ay);
 
-        // 4. 互相碰撞检测
-        if (p1.path.length && p2.path.length) {
-            const h1 = p1.path[0];
-            const h2 = p2.path[0];
-            // 头碰头
-            if (Math.hypot(h1.x - h2.x, h1.y - h2.y) < 40) {
-                p1.reset(); p2.reset();
-            }
-            // 蛇1头碰蛇2身
-            for(let i=10; i<p2.path.length; i+=5) {
-                if(Math.hypot(h1.x - p2.path[i].x, h1.y - p2.path[i].y) < 25) p1.reset();
-            }
-            // 蛇2头碰蛇1身
-            for(let i=10; i<p1.path.length; i+=5) {
-                if(Math.hypot(h2.x - p1.path[i].x, h2.y - p1.path[i].y) < 25) p2.reset();
+            if (realDist < 30) {
+                score += 10;
+                scoreElement.innerText = score;
+                snakeLength += 2; // 变长
+                initApple();
             }
         }
 
-        // 5. 绘制蛇身
-        [p1, p2].forEach(s => {
-            for (let i = 0; i < s.length; i++) {
-                const idx = i * 3;
-                if (idx < s.path.length) {
-                    const pt = s.path[idx];
-                    canvasCtx.beginPath();
-                    canvasCtx.arc(pt.x, pt.y, Math.max(5, 20 - i*0.2), 0, Math.PI*2);
-                    canvasCtx.fillStyle = `hsl(${(s.hue + i*5)%360}, 70%, 60%)`;
-                    canvasCtx.fill();
-                }
-            }
-        });
+        // 4. 绘制苹果
+        drawApple();
+
+        // 5. 绘制蛇身（平滑拖尾）
+        drawSnake();
     }
 
-    // --- 启动流程 ---
+    function drawApple() {
+        const x = canvasElement.width - (apple.x * canvasElement.width); // 镜像位置
+        const y = apple.y * canvasElement.height;
+        
+        canvasCtx.beginPath();
+        canvasCtx.arc(x, y, apple.radius, 0, Math.PI * 2);
+        canvasCtx.fillStyle = '#ff4d4d';
+        canvasCtx.fill();
+        // 给苹果加个光晕
+        canvasCtx.shadowBlur = 15;
+        canvasCtx.shadowColor = "red";
+        canvasCtx.strokeStyle = "white";
+        canvasCtx.lineWidth = 2;
+        canvasCtx.stroke();
+        canvasCtx.shadowBlur = 0;
+        canvasCtx.closePath();
+    }
+
+    function drawSnake() {
+        if (snakePath.length === 0) return;
+
+        // 绘制身体节段
+        for (let i = 0; i < snakeLength; i++) {
+            const pathIndex = i * segmentInterval;
+            if (pathIndex < snakePath.length) {
+                const pos = snakePath[pathIndex];
+                const size = Math.max(10, 25 - i * 0.5); // 尾部变细
+                
+                canvasCtx.beginPath();
+                canvasCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+                
+                // 彩虹色渐变效果
+                const hue = (Date.now() / 10 + i * 10) % 360;
+                canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+                
+                canvasCtx.fill();
+                canvasCtx.closePath();
+            }
+        }
+
+        // 绘制蛇头（眼睛）
+        const head = snakePath[0];
+        canvasCtx.fillStyle = "white";
+        canvasCtx.beginPath();
+        canvasCtx.arc(head.x - 8, head.y - 8, 5, 0, Math.PI * 2);
+        canvasCtx.arc(head.x + 8, head.y - 8, 5, 0, Math.PI * 2);
+        canvasCtx.fill();
+    }
+
+    // --- 初始化 MediaPipe Hands ---
     const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }
     });
 
     hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 0, // 降低复杂度提高帧率，防止卡死
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
 
     hands.onResults(onResults);
 
+    // --- 启动摄像头 ---
     const camera = new Camera(videoElement, {
         onFrame: async () => {
-            try {
-                await hands.send({ image: videoElement });
-            } catch (e) {
-                console.error("AI 帧处理失败:", e);
-            }
+            await hands.send({ image: videoElement });
         },
         width: 1280,
         height: 720
     });
 
-    camera.start().catch(err => {
-        loadingElement.innerText = "摄像头启动失败，请确保已授权。";
+    initApple();
+    camera.start();
+
+    // 窗口大小适配
+    window.addEventListener('resize', () => {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
     });
 </script>
+
 </body>
 </html>
+
 
 
 
