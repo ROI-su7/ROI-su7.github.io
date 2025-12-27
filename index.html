@@ -2,23 +2,26 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>3D粒子手势交互 - XZ</title>
+    <title>3D粒子双控交互系统 - XZ</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
+        body { margin: 0; overflow: hidden; background: #000; cursor: none; }
         canvas { display: block; }
         #info {
-            position: absolute;
-            top: 10px; left: 10px;
-            color: white;
-            font-family: Arial;
-            pointer-events: none;
-            text-shadow: 1px 1px 2px black;
+            position: absolute; top: 20px; left: 20px; color: #00ffff;
+            font-family: 'Segoe UI', sans-serif; pointer-events: none;
+            line-height: 1.5; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px;
         }
-        video { transform: scaleX(-1); position: absolute; bottom: 10px; right: 10px; width: 200px; border: 2px solid #555; }
+        video { transform: scaleX(-1); position: absolute; bottom: 10px; right: 10px; width: 180px; border-radius: 10px; opacity: 0.7; }
     </style>
 </head>
 <body>
-    <div id="info">手势 1: Hello | 手势 2: 我是 XZ | 手势 3: 今晚夜宵吃什么<br>张合双手控制扩散/收缩</div>
+    <div id="info">
+        <b>[左手] 控制形态：</b><br>
+        1指: Hello | 2指: 我是 XZ | 3指: 夜宵吃什么<br>
+        捏合/张开: 粒子缩放<br><br>
+        <b>[右手] 实时扰动：</b><br>
+        在粒子群中移动手指产生力场
+    </div>
     <video id="input_video"></video>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -27,51 +30,46 @@
 
     <script>
         const videoElement = document.getElementById('input_video');
-        const particleCount = 5000;
+        const pCount = 6000;
         let scene, camera, renderer, particles, geometry;
         let targetPoints = [];
-        let currentScale = 1;
+        let curScale = 1;
+        let disturbPoint = new THREE.Vector3(1000, 1000, 1000); // 右手力场位置
 
-        // 1. 文字采样函数
+        // --- 1. 文字采样系统 ---
         function createTextPoints(text) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 400;
-            canvas.height = 200;
+            canvas.width = 512; canvas.height = 256;
             ctx.fillStyle = 'white';
-            ctx.font = 'bold 40px "Microsoft YaHei", sans-serif';
+            ctx.font = 'bold 50px "Microsoft YaHei"';
             ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, 200, 100);
+            ctx.fillText(text, 256, 128);
 
-            const imageData = ctx.getImageData(0, 0, 400, 200).data;
+            const data = ctx.getImageData(0, 0, 512, 256).data;
             const pts = [];
-            for (let y = 0; y < 200; y += 2) {
-                for (let x = 0; x < 400; x += 2) {
-                    const alpha = imageData[(y * 400 + x) * 4 + 3];
-                    if (alpha > 128) {
-                        pts.push(new THREE.Vector3((x - 200) * 0.05, (100 - y) * 0.05, 0));
+            for (let y = 0; y < 256; y += 3) {
+                for (let x = 0; x < 512; x += 3) {
+                    if (data[(y * 512 + x) * 4 + 3] > 128) {
+                        pts.push(new THREE.Vector3((x - 256) * 0.04, (128 - y) * 0.04, 0));
                     }
                 }
             }
-            // 补齐点数
-            while (pts.length < particleCount) {
-                pts.push(new THREE.Vector3((Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20));
-            }
+            while (pts.length < pCount) pts.push(new THREE.Vector3(0,0,0));
             return pts;
         }
 
-        const textLibrary = {
+        const library = {
             1: createTextPoints("Hello"),
             2: createTextPoints("我是 XZ"),
             3: createTextPoints("今晚夜宵吃什么")
         };
-        targetPoints = textLibrary[1];
+        targetPoints = library[1];
 
-        // 2. 初始化 Three.js
-        function initThree() {
+        // --- 2. Three.js 初始化 ---
+        function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
             camera.position.z = 15;
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -79,83 +77,99 @@
             document.body.appendChild(renderer.domElement);
 
             geometry = new THREE.BufferGeometry();
-            const positions = new Float32Array(particleCount * 3);
-            for(let i=0; i<particleCount*3; i++) positions[i] = (Math.random() - 0.5) * 20;
+            const posArray = new Float32Array(pCount * 3);
+            const velArray = new Float32Array(pCount * 3); // 速度数组用于更平滑的扰动
+            geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
             
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            const material = new THREE.PointsMaterial({ color: 0x00ffff, size: 0.08, transparent: true, opacity: 0.8 });
-            particles = new THREE.Points(geometry, material);
+            const mat = new THREE.PointsMaterial({ 
+                color: 0x00f3ff, size: 0.07, blending: THREE.AdditiveBlending 
+            });
+            particles = new THREE.Points(geometry, mat);
             scene.add(particles);
 
-            animate();
+            loop();
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            const positions = geometry.attributes.position.array;
+        function loop() {
+            requestAnimationFrame(loop);
+            const pos = geometry.attributes.position.array;
             
-            for (let i = 0; i < particleCount; i++) {
+            for (let i = 0; i < pCount; i++) {
                 const i3 = i * 3;
                 const target = targetPoints[i];
                 
-                // 缓动动画：当前位置向 (目标点 * 缩放) 移动
-                positions[i3] += (target.x * currentScale - positions[i3]) * 0.1;
-                positions[i3+1] += (target.y * currentScale - positions[i3+1]) * 0.1;
-                positions[i3+2] += (target.z * currentScale - positions[i3+2]) * 0.1;
+                // 基础回归动力
+                const destX = target.x * curScale;
+                const destY = target.y * curScale;
+                
+                // 计算与右手扰动点的距离
+                const dx = pos[i3] - disturbPoint.x;
+                const dy = pos[i3+1] - disturbPoint.y;
+                const distSq = dx*dx + dy*dy;
+                const forceRange = 4; // 力场范围
+                
+                if (distSq < forceRange) {
+                    // 产生排斥力
+                    const force = (forceRange - distSq) / forceRange;
+                    pos[i3] += dx * force * 0.2;
+                    pos[i3+1] += dy * force * 0.2;
+                }
+
+                // 向目标点平滑插值
+                pos[i3] += (destX - pos[i3]) * 0.08;
+                pos[i3+1] += (destY - pos[i3+1]) * 0.08;
+                pos[i3+2] += (target.z - pos[i3+2]) * 0.08;
             }
             geometry.attributes.position.needsUpdate = true;
             renderer.render(scene, camera);
         }
 
-        // 3. 手势识别逻辑
+        // --- 3. 手势解析逻辑 ---
         function onResults(results) {
+            disturbPoint.set(1000, 1000, 1000); // 默认移出力场
+
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    const label = results.multiHandedness[index].label; // Left 或 Right (注意摄像头镜像是反的)
+                    
+                    // 屏幕坐标转换至 3D 空间
+                    const x = (0.5 - landmarks[8].x) * 30; 
+                    const y = (0.5 - landmarks[8].y) * 20;
 
-                // 识别数字手势 (根据手指尖是否高于指节)
-                const checkUp = (tip, pip) => landmarks[tip].y < landmarks[pip].y;
-                const fingers = [
-                    checkUp(8, 6),  // 食指
-                    checkUp(12, 10), // 中指
-                    checkUp(16, 14), // 无名指
-                    checkUp(20, 18)  // 小指
-                ];
+                    if (label === 'Left') { // 扰动手
+                        disturbPoint.set(x, y, 0);
+                    } else { // 控制手
+                        const check = (t, p) => landmarks[t].y < landmarks[p].y;
+                        const count = [check(8,6), check(12,10), check(16,14)].filter(v=>v).length;
+                        if (library[count]) targetPoints = library[count];
 
-                const count = fingers.filter(v => v).length;
-                if (textLibrary[count]) targetPoints = textLibrary[count];
-
-                // 计算张合度 (食指尖到大拇指尖的距离)
-                const dx = landmarks[8].x - landmarks[4].x;
-                const dy = landmarks[8].y - landmarks[4].y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                
-                // 映射距离到缩放 (0.1 - 0.4 映射到 0.5 - 3.0)
-                currentScale = THREE.MathUtils.mapLinear(dist, 0.05, 0.3, 0.5, 3.0);
+                        const d = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+                        curScale = THREE.MathUtils.mapLinear(d, 0.05, 0.3, 0.5, 4.0);
+                    }
+                });
             }
         }
 
-        const hands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-        });
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        // --- 4. 启动摄像头与 MediaPipe ---
+        const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6 });
         hands.onResults(onResults);
 
-        const cameraFeed = new Camera(videoElement, {
+        new Camera(videoElement, {
             onFrame: async () => { await hands.send({ image: videoElement }); },
             width: 640, height: 480
-        });
+        }).start();
 
-        initThree();
-        cameraFeed.start();
-
-        window.addEventListener('resize', () => {
+        init();
+        window.onresize = () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        };
     </script>
 </body>
 </html>
+
 
 
 
