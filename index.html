@@ -2,33 +2,31 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Magic Portal Debug Version</title>
+    <title>Doctor Strange Magic Shield</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; color: #ff9800; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #000; }
         #canvas-container { width: 100vw; height: 100vh; }
-        /* 调试面板 */
-        #debug-info { 
-            position: absolute; top: 10px; left: 10px; 
-            background: rgba(0,0,0,0.8); padding: 10px; 
-            font-size: 12px; z-index: 100; pointer-events: none;
-            border: 1px solid #ff9800;
+        #video-preview { 
+            position: absolute; top: 20px; right: 20px; 
+            width: 140px; height: 100px; border-radius: 8px; 
+            border: 1px solid #ff9800; transform: scaleX(-1);
+            background: #111; z-index: 10;
         }
-        #video-container { 
-            position: absolute; top: 10px; right: 10px; 
-            width: 120px; height: 90px; border: 1px solid #555; 
-            transform: scaleX(-1); z-index: 100;
+        .ui-tips {
+            position: absolute; bottom: 30px; width: 100%;
+            text-align: center; color: #ff9800; font-family: sans-serif;
+            pointer-events: none; text-shadow: 0 0 8px rgba(255,100,0,0.8);
         }
     </style>
 </head>
 <body>
 
-    <div id="debug-info">
-        系统状态：<span id="status">加载中...</span><br>
-        手势检测：<span id="hand-status">未检测到</span>
-    </div>
     <div id="canvas-container"></div>
-    <div id="video-container">
-        <video id="input-video" playsinline muted autoplay style="width:100%; height:100%; object-fit: cover;"></video>
+    <video id="video-preview" playsinline autoplay muted></video>
+    
+    <div class="ui-tips">
+        五指张开：召唤法阵 | 握拳：隐藏<br>
+        旋转手掌：控制符文转动 | 伸出双指：法阵共鸣
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
@@ -36,108 +34,130 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
     <script>
-        const statusEl = document.getElementById('status');
-        const handEl = document.getElementById('hand-status');
-        
-        let scene, camera, renderer, particles, geometry;
-        const PARTICLE_COUNT = 8000;
-        let isPerturbated = false;
+        let scene, camera, renderer, magicGroup;
+        let isPortalActive = false;
+        let portalOpacity = 0;
 
-        // 1. 基础场景初始化
         function initThree() {
-            try {
-                scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-                camera.position.z = 20;
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 15;
 
-                renderer = new THREE.WebGLRenderer({ antialias: true });
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.setClearColor(0x0a0a0a);
-                document.getElementById('canvas-container').appendChild(renderer.domElement);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-                geometry = new THREE.BufferGeometry();
-                const pos = new Float32Array(PARTICLE_COUNT * 3);
-                for(let i=0; i<PARTICLE_COUNT*3; i++) pos[i] = (Math.random()-0.5) * 2;
-                
-                geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-                const mat = new THREE.PointsMaterial({
-                    size: 0.15,
-                    color: 0xff6600,
-                    transparent: true,
-                    opacity: 0.5, // 初始可见，防止全黑误导
-                    blending: THREE.AdditiveBlending
-                });
+            // 创建法阵组合
+            magicGroup = new THREE.Group();
+            scene.add(magicGroup);
 
-                particles = new THREE.Points(geometry, mat);
-                scene.add(particles);
-                statusEl.innerText = "渲染引擎就绪，等待摄像头...";
-            } catch (e) {
-                statusEl.innerText = "渲染错误: " + e.message;
+            // 1. 主圆环
+            const ringGeom = new THREE.TorusGeometry(5, 0.05, 16, 100);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0 });
+            const mainRing = new THREE.Mesh(ringGeom, ringMat);
+            magicGroup.add(mainRing);
+
+            // 2. 内部几何几何符文 (用十二边形模拟)
+            const polyGeom = new THREE.CircleGeometry(4.8, 12);
+            const polyEdges = new THREE.EdgesGeometry(polyGeom);
+            const polyLine = new THREE.LineSegments(polyEdges, new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0 }));
+            magicGroup.add(polyLine);
+
+            // 3. 粒子火花层 (核心发光感)
+            const pCount = 2000;
+            const pGeom = new THREE.BufferGeometry();
+            const pPos = new Float32Array(pCount * 3);
+            for(let i=0; i<pCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const r = 4.8 + Math.random() * 0.5;
+                pPos[i*3] = Math.cos(angle) * r;
+                pPos[i*3+1] = Math.sin(angle) * r;
+                pPos[i*3+2] = (Math.random() - 0.5) * 0.5;
             }
+            pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            const pMat = new THREE.PointsMaterial({ 
+                size: 0.08, 
+                color: 0xffcc00, 
+                transparent: true, 
+                opacity: 0, 
+                blending: THREE.AdditiveBlending 
+            });
+            const sparks = new THREE.Points(pGeom, pMat);
+            magicGroup.add(sparks);
         }
 
-        // 2. 传送门形状逻辑
-        function updatePortal(time) {
-            const positions = geometry.attributes.position.array;
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const angle = (i / PARTICLE_COUNT) * Math.PI * 2 + time * 0.5;
-                const r = 6 + Math.random() * 2; 
-                positions[i*3] = Math.cos(angle) * r;
-                positions[i*3+1] = Math.sin(angle) * r;
-                positions[i*3+2] = isPerturbated ? Math.sin(time*10 + i)*2 : (Math.random()-0.5);
-            }
-            geometry.attributes.position.needsUpdate = true;
-        }
-
-        // 3. 手势与摄像头
         function initHands() {
-            const videoElement = document.getElementById('input-video');
-            const hands = new Hands({locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }});
-
+            const videoElement = document.getElementById('video-preview');
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            
             hands.setOptions({
                 maxNumHands: 1,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
             });
 
             hands.onResults((results) => {
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    handEl.innerText = "✋ 已锁定";
                     const lm = results.multiHandLandmarks[0];
                     
-                    // 逻辑：张开手 = 开启，握拳 = 关闭
-                    const isFist = lm[8].y > lm[6].y; 
-                    isPerturbated = (lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y);
-
-                    particles.material.opacity = isFist ? 0.1 : 1.0;
+                    // 判断手掌状态：计算指尖与指根距离
+                    const d8 = Math.hypot(lm[8].x - lm[5].x, lm[8].y - lm[5].y);
+                    const isFist = d8 < 0.08; // 距离近则为握拳
                     
+                    // 判断食指中指 (用于粒子扰动效果)
+                    const isPeace = (lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y);
+
+                    // 1. 设置目标透明度
+                    const targetOpacity = isFist ? 0 : 1;
+                    portalOpacity = THREE.MathUtils.lerp(portalOpacity, targetOpacity, 0.15);
+
+                    // 2. 更新法阵位置与旋转
                     const x = (lm[9].x - 0.5) * -30;
                     const y = (lm[9].y - 0.5) * -20;
-                    particles.position.set(x, y, 0);
-                    particles.rotation.z = Math.atan2(lm[20].y - lm[4].y, lm[20].x - lm[4].x);
+                    magicGroup.position.set(x, y, 0);
+
+                    // 计算手掌偏转角度
+                    const angle = Math.atan2(lm[17].y - lm[5].y, lm[17].x - lm[5].x);
+                    magicGroup.rotation.z = angle + Math.PI/2;
+
+                    // 如果检测到“剪刀手”，让法阵抖动
+                    if(isPeace) {
+                        magicGroup.position.x += (Math.random()-0.5) * 0.5;
+                        magicGroup.position.y += (Math.random()-0.5) * 0.5;
+                    }
+
+                    // 应用透明度到所有子物体
+                    magicGroup.children.forEach(obj => {
+                        obj.material.opacity = portalOpacity;
+                    });
+
                 } else {
-                    handEl.innerText = "未检测到手";
+                    // 没检测到手，慢慢消失
+                    portalOpacity = THREE.MathUtils.lerp(portalOpacity, 0, 0.1);
+                    magicGroup.children.forEach(obj => {
+                        obj.material.opacity = portalOpacity;
+                    });
                 }
             });
 
-            const cameraHelper = new Camera(videoElement, {
-                onFrame: async () => {
-                    await hands.send({image: videoElement});
-                },
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
                 width: 640, height: 480
             });
-
-            cameraHelper.start()
-                .then(() => statusEl.innerText = "运行中 (若画面仍黑请尝试刷新)")
-                .catch(err => statusEl.innerText = "摄像头失败: " + err);
+            camera.start();
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            updatePortal(performance.now() * 0.001);
+            
+            // 法阵自身的微弱自动旋转
+            if (portalOpacity > 0.01) {
+                magicGroup.children[1].rotation.z += 0.01; // 线框旋转
+                magicGroup.children[2].rotation.z -= 0.005; // 粒子反向转
+            }
+
             renderer.render(scene, camera);
         }
 
@@ -153,6 +173,7 @@
     </script>
 </body>
 </html>
+
 
 
 
