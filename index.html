@@ -3,276 +3,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D 星型手势粒子系统 - 描边版</title>
+    <title>3D 四角星手势交互系统</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #video-preview {
-            position: absolute;
-            top: 10px; left: 10px;
-            width: 160px; height: 120px;
-            border-radius: 8px;
-            opacity: 0.7;
-            z-index: 2;
-            transform: scaleX(-1); /* 镜像显示 */
-        }
-        #status-text {
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        
+        /* 磨砂玻璃星形 UI */
+        #ui-layer {
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            color: rgba(255, 255, 255, 0.9);
-            font-family: 'Segoe UI', sans-serif;
-            font-size: 3rem;
-            font-weight: 300;
-            letter-spacing: 4px;
-            text-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
+            width: 350px; height: 350px;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            /* 四角星裁切路径 */
+            clip-path: polygon(50% 0%, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0% 50%, 40% 40%);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             pointer-events: none;
-            z-index: 3;
+            display: flex; justify-content: center; align-items: center;
         }
+
+        #gesture-label {
+            color: white; font-size: 2rem; font-weight: 200; letter-spacing: 8px;
+            text-shadow: 0 0 15px rgba(255,255,255,0.5);
+        }
+
         #fullscreen-btn {
-            position: absolute;
-            bottom: 20px; right: 20px;
-            padding: 10px 20px;
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 30px;
-            cursor: pointer;
-            backdrop-filter: blur(5px);
-            z-index: 3;
+            position: absolute; bottom: 30px; right: 30px;
+            padding: 10px 25px; background: rgba(255,255,255,0.1);
+            color: white; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 20px; cursor: pointer; pointer-events: auto;
         }
+
+        #v-preview { position: absolute; top: 10px; left: 10px; width: 140px; border-radius: 10px; transform: scaleX(-1); opacity: 0.6; }
     </style>
 </head>
 <body>
-    <video id="video-preview" autoplay playsinline></video>
-    <div id="status-text">CORE</div>
-    <button id="fullscreen-btn">ENTER FULLSCREEN</button>
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script type="importmap">
-        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
-    </script>
+<video id="v-preview" autoplay playsinline></video>
+<div id="ui-layer"><div id="gesture-label">CORE</div></div>
+<button id="fullscreen-btn">FULLSCREEN</button>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { UnrealBloomPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
-        import { EffectComposer } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
-        import { RenderPass } from 'https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
 
-        let scene, camera, renderer, composer;
-        let particleSystem, starOutline;
-        let targetPos = new THREE.Vector3();
-        let spreadFactor = 1.0;
-        let isHandDetected = false;
+<script type="module">
+    import * as THREE from 'three';
 
-        // --- 1. Three.js 初始化 ---
-        function initThree() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 20;
+    // --- 场景初始化 ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    camera.position.z = 20;
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.body.appendChild(renderer.domElement);
+    // --- 四角星粒子数学模型 ---
+    const PARTICLE_COUNT = 12000;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(PARTICLE_COUNT * 3);
+    const targetPos = new Float32Array(PARTICLE_COUNT * 3);
+    const colors = new Float32Array(PARTICLE_COUNT * 3);
 
-            // 后期处理 - 辉光效果
-            const renderScene = new RenderPass(scene, camera);
-            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-            bloomPass.threshold = 0.1;
-            bloomPass.strength = 2.0; // 调整辉光强度
-            bloomPass.radius = 0.5;
-            composer = new EffectComposer(renderer);
-            composer.addPass(renderScene);
-            composer.addPass(bloomPass);
+    function getFourPointStar(t) {
+        // 使用 Astroid 曲线方程实现图二的四角星
+        const angle = t * Math.PI * 2;
+        const r = 8;
+        // x = r * cos^3(t), y = r * sin^3(t) 这是标准的星形线
+        const x = r * Math.pow(Math.cos(angle), 3);
+        const y = r * Math.pow(Math.sin(angle), 3);
+        return { x, y };
+    }
 
-            createParticles();
-            createStarOutline();
-            animate();
-        }
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const i3 = i * 3;
+        // 初始随机分布
+        pos[i3] = (Math.random() - 0.5) * 50;
+        pos[i3+1] = (Math.random() - 0.5) * 50;
+        pos[i3+2] = (Math.random() - 0.5) * 10;
 
-        // --- 2. 创建粒子系统 ---
-        function createParticles() {
-            const particleCount = 5000;
-            const geometry = new THREE.BufferGeometry();
-            const positions = new Float32Array(particleCount * 3);
-            const velocities = new Float32Array(particleCount * 3); // 用于简易物理
+        // 计算目标四角星位置
+        const t = Math.random();
+        const star = getFourPointStar(t);
+        targetPos[i3] = star.x;
+        targetPos[i3+1] = star.y;
+        targetPos[i3+2] = (Math.random() - 0.5) * 2;
 
-            for (let i = 0; i < particleCount; i++) {
-                positions[i * 3] = (Math.random() - 0.5) * 50;
-                positions[i * 3 + 1] = (Math.random() - 0.5) * 50;
-                positions[i * 3 + 2] = (Math.random() - 0.5) * 50;
-                velocities[i * 3] = (Math.random() - 0.5) * 0.02;
-                velocities[i * 3 + 1] = (Math.random() - 0.5) * 0.02;
-                velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.02;
-            }
+        // 颜色：越靠近四个角越亮（青白交替）
+        const isCorner = Math.abs(star.x) > 5 || Math.abs(star.y) > 5;
+        colors[i3] = isCorner ? 1 : 0.4; 
+        colors[i3+1] = isCorner ? 1 : 0.9;
+        colors[i3+2] = 1;
+    }
 
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('target', new THREE.BufferAttribute(targetPos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-            const material = new THREE.PointsMaterial({
-                size: 0.15,
-                color: 0x00ffff, // 青色
-                transparent: true,
-                opacity: 0.8,
-                blending: THREE.AdditiveBlending,
-            });
+    const mat = new THREE.PointsMaterial({
+        size: 0.06,
+        vertexColors: true,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        opacity: 0.8
+    });
 
-            particleSystem = new THREE.Points(geometry, material);
-            scene.add(particleSystem);
-        }
+    const particles = new THREE.Points(geo, mat);
+    scene.add(particles);
 
-        // --- 3. 创建星形描边 ---
-        function createStarOutline() {
-            const points = [];
-            const outerRadius = 10;
-            const innerRadius = 4;
-            const numPoints = 5;
+    // --- 手势追踪逻辑 ---
+    const video = document.getElementById('v-preview');
+    const label = document.getElementById('gesture-label');
+    const uiLayer = document.getElementById('ui-layer');
+    
+    let currentSpread = 1.0;
+    let lerpTargetPos = new THREE.Vector3();
 
-            for (let i = 0; i < numPoints * 2; i++) {
-                const angle = (i / (numPoints * 2)) * Math.PI * 2 - Math.PI / 2; // 从顶部开始
-                const radius = i % 2 === 0 ? outerRadius : innerRadius;
-                points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0));
-            }
-            // 闭合路径
-            points.push(points[0].clone());
+    const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
 
-            const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            const material = new THREE.LineBasicMaterial({ 
-                color: 0xffffff, // 白色描边
-                linewidth: 2,
-                transparent: true,
-                opacity: 0.9,
-                blending: THREE.AdditiveBlending
-            });
+    hands.onResults((res) => {
+        if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
+            const lm = res.multiHandLandmarks[0];
+            
+            // 跟随手势
+            lerpTargetPos.set((0.5 - lm[9].x) * 40, (0.5 - lm[9].y) * 25, 0);
 
-            starOutline = new THREE.Line(geometry, material);
-            scene.add(starOutline);
-        }
-
-        // --- 4. 动画循环 ---
-        function animate() {
-            requestAnimationFrame(animate);
-
-            if (!isHandDetected) {
-                // 手未检测到时，粒子自由漂浮
-                const positions = particleSystem.geometry.attributes.position.array;
-                const velocities = particleSystem.geometry.attributes.velocity.array;
-                for(let i=0; i<positions.length; i+=3){
-                    positions[i] += velocities[i];
-                    positions[i+1] += velocities[i+1];
-                    positions[i+2] += velocities[i+2];
-                    // 边界检查，让粒子在一定范围内循环
-                    if(Math.abs(positions[i]) > 30) velocities[i] *= -1;
-                    if(Math.abs(positions[i+1]) > 30) velocities[i+1] *= -1;
-                    if(Math.abs(positions[i+2]) > 30) velocities[i+2] *= -1;
-                }
-                particleSystem.geometry.attributes.position.needsUpdate = true;
-
-                // 星形缓慢旋转
-                starOutline.rotation.z += 0.005;
-                starOutline.scale.lerp(new THREE.Vector3(1, 1, 1), 0.05); // 回复默认大小
-                starOutline.position.lerp(new THREE.Vector3(0,0,0), 0.05); // 回复中心位置
-
+            // 计算张合度 (4号和8号点距离)
+            const d = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+            
+            // 握拳(d<0.1) -> 核心凝聚；张开(d>0.4) -> 撑满屏幕
+            currentSpread = THREE.MathUtils.mapLinear(d, 0.05, 0.45, 0.1, 4.0);
+            
+            // UI 反馈
+            if (d < 0.15) {
+                label.innerText = "CORE";
+                uiLayer.style.transform = "translate(-50%, -50%) scale(0.5)";
+            } else if (d > 0.35) {
+                label.innerText = "EXPAND";
+                uiLayer.style.transform = "translate(-50%, -50%) scale(2.0)";
             } else {
-                // 手检测到时，粒子聚集并跟随
-                particleSystem.position.lerp(targetPos, 0.1);
-                starOutline.position.lerp(targetPos, 0.1);
-
-                const baseScale = 0.5; // 基础大小
-                const targetScale = baseScale + spreadFactor * 3; // 根据手势计算目标大小
-                
-                // 星形缩放
-                starOutline.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
-                // 星形旋转
-                starOutline.rotation.z += 0.01 + spreadFactor * 0.02;
-
-                // 粒子向星形聚集的简单逻辑 (可优化为更复杂的引力场)
-                const positions = particleSystem.geometry.attributes.position.array;
-                 for(let i=0; i<positions.length; i+=3){
-                    // 简单的向中心聚集
-                    positions[i] += (0 - positions[i]) * (0.05 + spreadFactor * 0.05);
-                    positions[i+1] += (0 - positions[i+1]) * (0.05 + spreadFactor * 0.05);
-                    positions[i+2] += (0 - positions[i+2]) * (0.05 + spreadFactor * 0.05);
-                }
-                particleSystem.geometry.attributes.position.needsUpdate = true;
+                label.innerText = "READY";
+                uiLayer.style.transform = "translate(-50%, -50%) scale(1.0)";
             }
-
-            // 使用 composer 渲染以获得辉光效果
-            composer.render();
         }
+    });
 
-        // --- 5. MediaPipe Hands 初始化 ---
-        const videoElement = document.getElementById('video-preview');
-        const statusText = document.getElementById('status-text');
+    const cam = new Camera(video, {
+        onFrame: async () => { await hands.send({image: video}); },
+        width: 640, height: 480
+    });
+    cam.start();
 
-        const hands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-        });
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
+    // --- 渲染循环 ---
+    function render() {
+        requestAnimationFrame(render);
 
-        hands.onResults((results) => {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                isHandDetected = true;
-                const landmarks = results.multiHandLandmarks[0];
+        const p = geo.attributes.position.array;
+        const t = geo.attributes.target.array;
 
-                // 计算手掌中心 (使用中指根部和手腕中点)
-                const palmX = (landmarks[9].x + landmarks[0].x) / 2;
-                const palmY = (landmarks[9].y + landmarks[0].y) / 2;
-                
-                // 映射到 3D 空间坐标 (需根据摄像头和屏幕比例微调)
-                targetPos.set(
-                    (0.5 - palmX) * 40, // X轴反向
-                    (0.5 - palmY) * 25, // Y轴反向
-                    0
-                );
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            // 核心公式：位置向 (目标形状 * 缩放倍率) 靠拢
+            p[i3] += (t[i3] * currentSpread - p[i3]) * 0.1;
+            p[i3+1] += (t[i3+1] * currentSpread - p[i3+1]) * 0.1;
+            p[i3+2] += (t[i3+2] * currentSpread - p[i3+2]) * 0.1;
+        }
+        geo.attributes.position.needsUpdate = true;
 
-                // 计算拇指尖和食指尖的距离
-                const thumbTip = landmarks[4];
-                const indexTip = landmarks[8];
-                const distance = Math.sqrt(
-                    Math.pow(thumbTip.x - indexTip.x, 2) +
-                    Math.pow(thumbTip.y - indexTip.y, 2)
-                );
-                // 归一化距离因子
-                spreadFactor = Math.min(Math.max(distance - 0.05, 0) * 5, 1.5);
+        particles.position.lerp(lerpTargetPos, 0.1);
+        particles.rotation.z += 0.005; // 基础旋转
+        particles.rotation.y += 0.01 * currentSpread; // 扩散时加速旋转
 
-                // 更新文字和状态
-                if (spreadFactor < 0.3) {
-                    statusText.innerText = "CORE"; // 握拳/捏合
-                } else if (spreadFactor > 0.8) {
-                    statusText.innerText = "EXPAND"; // 张开
-                } else {
-                    statusText.innerText = "FLOW"; // 中间状态
-                }
+        renderer.render(scene, camera);
+    }
+    render();
 
-            } else {
-                isHandDetected = false;
-                statusText.innerText = "WAITING...";
-            }
-        });
-
-        const cameraUtils = new Camera(videoElement, {
-            onFrame: async () => { await hands.send({image: videoElement}); },
-            width: 640, height: 480
-        });
-        cameraUtils.start();
-
-        // --- 6. 事件监听 ---
-        initThree();
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
-        });
-        document.getElementById('fullscreen-btn').onclick = () => {
-            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-            else document.exitFullscreen();
-        };
-    </script>
+    // 全屏与自适应
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    document.getElementById('fullscreen-btn').onclick = () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+    };
+</script>
 </body>
 </html>
+
 
 
 
