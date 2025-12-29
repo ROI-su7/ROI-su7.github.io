@@ -3,231 +3,212 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediaPipe 手势贪吃蛇</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    
+    <title>3D 星型手势粒子系统</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background: #000;
-            font-family: 'Arial', sans-serif;
-        }
-        #container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-        }
-        /* 视频隐藏，只作为数据源 */
-        #input_video {
-            display: none;
-        }
-        /* 画布覆盖全屏 */
-        #output_canvas {
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', sans-serif; }
+        
+        /* 1. 磨砂玻璃 UI */
+        #ui-container {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        /* UI 层 */
-        #ui {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: white;
-            font-size: 24px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
             pointer-events: none;
-            z-index: 10;
         }
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 18px;
-            text-align: center;
+
+        .star-glass-panel {
+            width: 500px; height: 500px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            /* 星型裁切 */
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         }
+
+        #gesture-text {
+            color: #fff; font-size: 3rem; font-weight: 200;
+            letter-spacing: 10px; text-shadow: 0 0 20px rgba(0,255,255,0.5);
+            transition: all 0.3s ease;
+        }
+
+        /* 2. 全屏按钮 */
+        #fullscreen-btn {
+            position: absolute; bottom: 30px; right: 30px;
+            padding: 12px 24px; background: rgba(255, 255, 255, 0.1);
+            color: white; border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50px; cursor: pointer; pointer-events: auto;
+            backdrop-filter: blur(5px); transition: 0.3s;
+        }
+        #fullscreen-btn:hover { background: rgba(255, 255, 255, 0.3); }
+
+        canvas { display: block; }
+        #video-preview { position: absolute; top: 10px; left: 10px; width: 120px; border-radius: 8px; opacity: 0.5; }
     </style>
 </head>
 <body>
 
-<div id="container">
-    <video id="input_video"></video>
-    <canvas id="output_canvas"></canvas>
-    <div id="ui">分数: <span id="score">0</span></div>
-    <div id="loading">正在加载 AI 模型，请稍候...</div>
-</div>
-
-<script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const scoreElement = document.getElementById('score');
-    const loadingElement = document.getElementById('loading');
-
-    // --- 游戏配置 ---
-    let score = 0;
-    let apple = { x: 0.5, y: 0.5, radius: 15 };
+    <video id="video-preview" autoplay playsinline></video>
     
-    // 蛇的逻辑
-    // snakePath 存储头部的移动轨迹，用于实现平滑拖尾
-    let snakePath = []; 
-    const pathMaxLength = 500; // 轨迹最大长度
-    let snakeLength = 5; // 初始蛇段数
-    const segmentInterval = 6; // 身体节段在路径中的间隔（控制节段间距）
+    <div id="ui-container">
+        <div class="star-glass-panel">
+            <h1 id="gesture-text">LOADING...</h1>
+        </div>
+    </div>
 
-    function initApple() {
-        apple.x = Math.random() * 0.8 + 0.1;
-        apple.y = Math.random() * 0.8 + 0.1;
-    }
+    <button id="fullscreen-btn">ENTER FULLSCREEN</button>
 
-    // --- MediaPipe 处理 ---
-    function onResults(results) {
-        // 隐藏加载提示
-        if (loadingElement) loadingElement.style.display = 'none';
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
 
-        // 1. 准备画布
-        canvasElement.width = window.innerWidth;
-        canvasElement.height = window.innerHeight;
-        
-        canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    <script type="module">
+        import * as THREE from 'three';
 
-        // 2. 绘制镜像视频背景
-        canvasCtx.translate(canvasElement.width, 0);
-        canvasCtx.scale(-1, 1);
-        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.restore();
+        // --- 初始化场景 ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 15;
 
-        // 3. 逻辑处理：获取指尖坐标
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const hand = results.multiHandLandmarks[0];
-            // 指尖坐标 (Index Finger Tip is Landmark 8)
-            // 考虑镜像：1 - x
-            const headX = (1 - hand[8].x) * canvasElement.width;
-            const headY = hand[8].y * canvasElement.height;
+        // --- 粒子系统设置 ---
+        const particleCount = 15000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const targetPositions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
 
-            // 更新路径
-            snakePath.unshift({ x: headX, y: headY });
-            if (snakePath.length > pathMaxLength) snakePath.pop();
+        // 生成星型路径点函数 (用于粒子聚集)
+        const getStarPos = (t) => {
+            const angle = t * Math.PI * 2;
+            const r = (t * 10 % 2 < 1) ? 5 : 2.5; 
+            return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+        };
 
-            // 碰撞检测（食指与苹果）
-            const appleCanvasX = (1 - apple.x) * canvasElement.width; // 同样处理苹果的镜像绘制
-            const dist = Math.hypot(headX - (canvasElement.width - apple.x * canvasElement.width), headY - apple.y * canvasElement.height);
+        for (let i = 0; i < particleCount; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 40;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 40;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 40;
+
+            const star = getStarPos(Math.random());
+            targetPositions[i * 3] = star.x;
+            targetPositions[i * 3 + 1] = star.y;
+            targetPositions[i * 3 + 2] = (Math.random() - 0.5) * 2;
             
-            // 因为苹果坐标是基于 0-1 的比例，我们直接转换比较
-            const ax = apple.x * canvasElement.width;
-            const ay = apple.y * canvasElement.height;
-            // 注意：由于视频镜像绘制，食指在左边其实对应的是摄像头的右边，
-            // 简单处理：将手势坐标转为 Canvas 坐标后，直接在 Canvas 空间判断。
-            const realDist = Math.hypot(headX - (canvasElement.width - ax), headY - ay);
-
-            if (realDist < 30) {
-                score += 10;
-                scoreElement.innerText = score;
-                snakeLength += 2; // 变长
-                initApple();
-            }
+            colors[i * 3] = 0.5; colors[i * 3 + 1] = 1.0; colors[i * 3 + 2] = 1.0;
         }
 
-        // 4. 绘制苹果
-        drawApple();
-
-        // 5. 绘制蛇身（平滑拖尾）
-        drawSnake();
-    }
-
-    function drawApple() {
-        const x = canvasElement.width - (apple.x * canvasElement.width); // 镜像位置
-        const y = apple.y * canvasElement.height;
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('target', new THREE.BufferAttribute(targetPositions, 3));
         
-        canvasCtx.beginPath();
-        canvasCtx.arc(x, y, apple.radius, 0, Math.PI * 2);
-        canvasCtx.fillStyle = '#ff4d4d';
-        canvasCtx.fill();
-        // 给苹果加个光晕
-        canvasCtx.shadowBlur = 15;
-        canvasCtx.shadowColor = "red";
-        canvasCtx.strokeStyle = "white";
-        canvasCtx.lineWidth = 2;
-        canvasCtx.stroke();
-        canvasCtx.shadowBlur = 0;
-        canvasCtx.closePath();
-    }
+        const material = new THREE.PointsMaterial({
+            size: 0.03,
+            vertexColors: false,
+            color: 0x00ffff,
+            transparent: true,
+            blending: THREE.AdditiveBlending
+        });
 
-    function drawSnake() {
-        if (snakePath.length === 0) return;
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
 
-        // 绘制身体节段
-        for (let i = 0; i < snakeLength; i++) {
-            const pathIndex = i * segmentInterval;
-            if (pathIndex < snakePath.length) {
-                const pos = snakePath[pathIndex];
-                const size = Math.max(10, 25 - i * 0.5); // 尾部变细
+        // --- 手势识别逻辑 ---
+        const videoElement = document.getElementById('video-preview');
+        const gestureText = document.getElementById('gesture-text');
+        let spreadFactor = 1.0;
+        let targetPos = new THREE.Vector3(0, 0, 0);
+
+        
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
                 
-                canvasCtx.beginPath();
-                canvasCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+                // 1. 位置追踪 (平滑映射)
+                const x = (0.5 - landmarks[9].x) * 30;
+                const y = (0.5 - landmarks[9].y) * 20;
+                targetPos.set(x, y, 0);
+
+                // 2. 缩放控制 (计算大拇指和食指距离)
+                const dist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+                spreadFactor = dist * 8.0;
+
+                // 3. 手势文字逻辑
+                // 检查指尖高度判断手势
+                const tip8 = landmarks[8].y, mid6 = landmarks[6].y;
+                const tip12 = landmarks[12].y, mid10 = landmarks[10].y;
                 
-                // 彩虹色渐变效果
-                const hue = (Date.now() / 10 + i * 10) % 360;
-                canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
-                
-                canvasCtx.fill();
-                canvasCtx.closePath();
+                if (tip8 > mid6 && tip12 > mid10) {
+                    gestureText.innerText = "CORE";      // 手势1：握拳
+                    material.color.setHex(0x00ffff);
+                } else if (tip8 < mid6 && tip12 > mid10) {
+                    gestureText.innerText = "POINTER";   // 手势2：伸食指
+                    material.color.setHex(0xffaa00);
+                } else {
+                    gestureText.innerText = "EXPAND";    // 手势3：全张开
+                    material.color.setHex(0xff00ff);
+                }
             }
+        });
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cameraUtils.start();
+
+        // --- 动画循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 粒子缓动效果
+            const positions = geometry.attributes.position.array;
+            const targets = geometry.attributes.target.array;
+
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                // 核心逻辑：粒子向“目标星型坐标 * 缩放”移动
+                positions[i3] += (targets[i3] * spreadFactor - positions[i3]) * 0.1;
+                positions[i3+1] += (targets[i3+1] * spreadFactor - positions[i3+1]) * 0.1;
+                positions[i3+2] += (targets[i3+2] * spreadFactor - positions[i3+2]) * 0.1;
+            }
+            geometry.attributes.position.needsUpdate = true;
+
+            // 整体跟随与旋转
+            particleSystem.position.lerp(targetPos, 0.1);
+            particleSystem.rotation.y += 0.005;
+            particleSystem.rotation.z += 0.002;
+
+            renderer.render(scene, camera);
         }
+        animate();
 
-        // 绘制蛇头（眼睛）
-        const head = snakePath[0];
-        canvasCtx.fillStyle = "white";
-        canvasCtx.beginPath();
-        canvasCtx.arc(head.x - 8, head.y - 8, 5, 0, Math.PI * 2);
-        canvasCtx.arc(head.x + 8, head.y - 8, 5, 0, Math.PI * 2);
-        canvasCtx.fill();
-    }
+        // 全屏逻辑
+        document.getElementById('fullscreen-btn').onclick = () => {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else document.exitFullscreen();
+        };
 
-    // --- 初始化 MediaPipe Hands ---
-    const hands = new Hands({
-        locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        }
-    });
-
-    hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
-
-    hands.onResults(onResults);
-
-    // --- 启动摄像头 ---
-    const camera = new Camera(videoElement, {
-        onFrame: async () => {
-            await hands.send({ image: videoElement });
-        },
-        width: 1280,
-        height: 720
-    });
-
-    initApple();
-    camera.start();
-
-    // 窗口大小适配
-    window.addEventListener('resize', () => {
-        canvasElement.width = window.innerWidth;
-        canvasElement.height = window.innerHeight;
-    });
-</script>
-
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
+
 
 
 
