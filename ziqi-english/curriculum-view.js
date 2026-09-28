@@ -1,20 +1,20 @@
-// The original DOCX has Chinese meanings only. Known words reuse the site's
-// existing IPA and example data; every curriculum item can be read aloud.
+// 教材词表逐条附有校订的音标和适合小学生的短例句。
 const primaryState = {grade: 0, unit: 0, query: '', limit: 60};
 const primaryItems = PRIMARY_CURRICULUM.flatMap((volume, gi) => volume.units.flatMap((unit, ui) =>
-  unit.words.map(([word, meaning], wi) => ({id:`${gi}-${ui}-${wi}`,word,meaning,gi,ui,wi,grade:volume.grade,unitTitle:unit.title,unitNumber:unit.number}))
+  unit.words.map(([word, meaning, ipa, sentence], wi) => ({id:`${gi}-${ui}-${wi}`,word,meaning,ipa,sentence,gi,ui,wi,grade:volume.grade,unitTitle:unit.title,unitNumber:unit.number}))
 ));
 const primaryCount = primaryItems.length;
+const primaryById = new Map(primaryItems.map(item=>[item.id,item]));
 
 function primaryCard(item, showContext=false) {
-  const known=WORDS.find(w=>w.word.toLowerCase()===item.word.toLowerCase());
   const learned=progress.curriculumLearned.includes(item.id);
   return `<article class="curriculum-word ${learned?'is-learned':''}">
-    <div class="curriculum-word-head"><span class="curriculum-number">${String(item.wi+1).padStart(2,'0')}</span><span class="curriculum-word-title">${esc(item.word)}</span><button class="curriculum-sound" data-action="primary-speak" data-word="${esc(item.word)}" aria-label="朗读 ${esc(item.word)}" title="朗读单词">◖))</button></div>
+    <div class="curriculum-word-head"><span class="curriculum-number">${String(item.wi+1).padStart(2,'0')}</span><span class="curriculum-word-title">${esc(item.word)}</span><button class="curriculum-sound" data-action="primary-speak" data-id="${item.id}" aria-label="朗读 ${esc(item.word)}" title="朗读单词">◖))</button></div>
     <div class="curriculum-meaning">${esc(item.meaning)}</div>
-    ${known?`<div class="curriculum-ipa">${esc(known.ipa)}</div>`:''}
+    <div class="curriculum-ipa">${esc(item.ipa)}</div>
+    <div class="curriculum-sentence"><span><b>例句</b> ${esc(item.sentence)}</span><button data-action="primary-example" data-id="${item.id}" aria-label="播放例句 ${esc(item.sentence)}" title="播放例句">🔊</button></div>
     ${showContext?`<div class="curriculum-location">${esc(item.grade)} · Unit ${item.unitNumber}</div>`:''}
-    <div class="curriculum-word-footer"><button data-action="primary-toggle" data-id="${item.id}" class="curriculum-check ${learned?'checked':''}">${learned?'✓ 已掌握':'○ 标记掌握'}</button>${known?`<button class="curriculum-example-link" data-action="primary-example" data-word="${esc(item.word)}">听例句 ↗</button>`:''}</div>
+    <div class="curriculum-word-footer"><button data-action="primary-toggle" data-id="${item.id}" class="curriculum-check ${learned?'checked':''}">${learned?'✓ 已掌握':'○ 标记掌握'}</button><button data-action="primary-speak" data-id="${item.id}" data-slow="true" class="curriculum-example-link">🐢 慢速读词</button></div>
   </article>`;
 }
 
@@ -42,7 +42,7 @@ function primaryPage() {
     ${searching?`<div class="curriculum-section-label"><h2>搜索结果 <em>${matches.length}</em></h2><small>跨全部 7 册搜索</small></div>`:`<div class="curriculum-section-label"><h2>${esc(volume.grade)} · 选择单元</h2><small>每个单元都可以逐词点读</small></div><div class="curriculum-units">${units}</div><div class="curriculum-unit-head"><div><span class="eyebrow">UNIT ${unit.number}</span><h2>${esc(unit.title)}</h2><p>${esc(volume.grade)} · 本单元 ${unit.words.length} 词 · 已掌握 ${learned} 词</p></div><div class="curriculum-unit-progress"><span>${Math.round(learned/unit.words.length*100)}%</span><div class="progress-line"><div class="progress-fill" style="width:${Math.round(learned/unit.words.length*100)}%"></div></div></div></div>`}
     ${activeItems.length?`<div class="curriculum-words">${activeItems.map(item=>primaryCard(item,searching)).join('')}</div>`:`<div class="empty-state"><span>🔎</span><strong>没有找到相关单词</strong><p>换个英文或中文关键词试试看。</p></div>`}
     ${searching&&matches.length>activeItems.length?`<button class="curriculum-more" data-action="primary-more">继续显示（还剩 ${matches.length-activeItems.length} 条）</button>`:''}
-    ${!searching?`<div class="curriculum-bottom"><button class="secondary-btn" data-action="primary-next">下一个单元 →</button><span>词语与中文释义按你提供的 DOCX 原顺序收录。</span></div>`:''}`;
+    ${!searching?`<div class="curriculum-bottom"><button class="secondary-btn" data-action="primary-next">下一个单元 →</button><span>823 条词语均有音标、例句和点击朗读。</span></div>`:''}`;
 }
 
 document.addEventListener('click',event=>{
@@ -51,8 +51,8 @@ document.addEventListener('click',event=>{
   const action=button.dataset.action;
   if(action==='primary-grade'){primaryState.grade=Number(button.dataset.index);primaryState.unit=0;primaryState.query='';primaryState.limit=60;render()}
   else if(action==='primary-unit'){primaryState.unit=Number(button.dataset.index);render()}
-  else if(action==='primary-speak'){speak(button.dataset.word)}
-  else if(action==='primary-example'){const word=WORDS.find(w=>w.word.toLowerCase()===button.dataset.word.toLowerCase());if(word)speak(word.sentence)}
+  else if(action==='primary-speak'){const item=primaryById.get(button.dataset.id);if(item)speak(item.word.replace(/\s*\([^)]*\)/g,''),button.dataset.slow==='true')}
+  else if(action==='primary-example'){const item=primaryById.get(button.dataset.id);if(item)speak(item.sentence)}
   else if(action==='primary-toggle'){
     const id=button.dataset.id;
     const index=progress.curriculumLearned.indexOf(id);
