@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f8f7f0" />
+  <meta name="description" content="梓旗英语：适合小学和初中生的趣味英语单词学习网站，支持发音、跟读和默写。" />
+  <title>梓旗英语 · 每天一点点，英语更棒棒</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a href="#" class="brand" aria-label="梓旗英语首页"><span class="brand-mark">✳</span><span><b>梓旗英语</b><small>ZIQI ENGLISH</small></span></a>
+      <p class="side-heading">学习空间 <span>LEARN</span></p>
+      <nav class="nav-list" aria-label="学习功能">
+        <button class="nav-item active" data-page="home"><span class="nav-icon peach">⌂</span>学习首页<span class="nav-arrow">›</span></button>
+        <button class="nav-item" data-page="primary"><span class="nav-icon green">✿</span>小学英语<span class="nav-arrow">›</span></button>
+        <button class="nav-item" data-page="dictionary"><span class="nav-icon blue">▦</span>单词字典<span class="nav-arrow">›</span></button>
+        <button class="nav-item" data-page="speaking"><span class="nav-icon purple">◉</span>口语跟读<span class="nav-arrow">›</span></button>
+        <button class="nav-item" data-page="dictation"><span class="nav-icon yellow">✎</span>单词默写<span class="nav-arrow">›</span></button>
+        <button class="nav-item" data-page="saved"><span class="nav-icon green">♡</span>我的单词本<span class="nav-arrow">›</span></button>
+      </nav>
+      <div class="side-bottom"><div class="mascot small-mascot"><span class="face">•ᴗ•</span></div><div><strong>每天进步一点点！</strong><small>今天也要开心学英语呀 ✨</small></div></div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar">
+        <button id="menuButton" class="menu-button icon-button" aria-label="打开菜单">☰</button>
+        <div class="breadcrumb">学习空间 <span>/</span> <b id="breadcrumbText">学习首页</b></div>
+        <div class="top-right"><span class="date-pill" id="todayDate"></span><span class="avatar" aria-label="小小探险家">👩🏻‍🚀</span></div>
+      </header>
+      <main id="mainContent"></main>
+    </div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="words.js"></script>
+  <script src="curriculum.js"></script>
+  <script src="curriculum-view.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
