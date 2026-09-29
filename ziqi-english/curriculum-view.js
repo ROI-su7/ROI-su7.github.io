@@ -42,7 +42,7 @@ function primaryPage() {
     ${searching?`<div class="curriculum-section-label"><h2>搜索结果 <em>${matches.length}</em></h2><small>跨全部 7 册搜索</small></div>`:`<div class="curriculum-section-label"><h2>${esc(volume.grade)} · 选择单元</h2><small>每个单元都可以逐词点读</small></div><div class="curriculum-units">${units}</div><div class="curriculum-unit-head"><div><span class="eyebrow">UNIT ${unit.number}</span><h2>${esc(unit.title)}</h2><p>${esc(volume.grade)} · 本单元 ${unit.words.length} 词 · 已掌握 ${learned} 词</p></div><div class="curriculum-unit-progress"><span>${Math.round(learned/unit.words.length*100)}%</span><div class="progress-line"><div class="progress-fill" style="width:${Math.round(learned/unit.words.length*100)}%"></div></div></div></div>`}
     ${activeItems.length?`<div class="curriculum-words">${activeItems.map(item=>primaryCard(item,searching)).join('')}</div>`:`<div class="empty-state"><span>🔎</span><strong>没有找到相关单词</strong><p>换个英文或中文关键词试试看。</p></div>`}
     ${searching&&matches.length>activeItems.length?`<button class="curriculum-more" data-action="primary-more">继续显示（还剩 ${matches.length-activeItems.length} 条）</button>`:''}
-    ${!searching?`<div class="curriculum-bottom"><button class="secondary-btn" data-action="primary-next">下一个单元 →</button><span>823 条词语均有音标、例句和点击朗读。</span></div>`:''}`;
+    ${!searching?`<div class="curriculum-bottom"><button class="secondary-btn" data-action="primary-next">下一个单元 →</button><span>${primaryCount} 条教材词语均有音标、例句和点击朗读。</span></div>`:''}`;
 }
 
 document.addEventListener('click',event=>{
