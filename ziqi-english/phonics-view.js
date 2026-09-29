@@ -52,7 +52,7 @@ document.addEventListener('click',event=>{
   const action=button.dataset.action;
   if(action==='phonics-level'){phonicsState.level=Number(button.dataset.index);render()}
   else if(action==='phonics-next'){phonicsState.level=(phonicsState.level+1)%PHONICS_LEVELS.length;render();main.scrollIntoView({behavior:'smooth'})}
-  else if(action==='phonics-play'){const item=phonicsById.get(button.dataset.id);if(item)speak(item.word,true)}
+  else if(action==='phonics-play'){const item=phonicsById.get(button.dataset.id);if(item)speak(item.word)}
   else if(action==='phonics-mark'){
     const id=button.dataset.id;
     const index=progress.phonicsLearned.indexOf(id);

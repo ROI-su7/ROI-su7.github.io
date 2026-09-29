@@ -65,7 +65,7 @@ document.addEventListener('click',event=>{
   if(action==='cd-volume'){curriculumDictationState.volume=Number(button.dataset.index);curriculumDictationState.unit=0;curriculumDictationState.index=0;curriculumDictationState.result=null;render()}
   else if(action==='cd-unit'){curriculumDictationState.unit=Number(button.dataset.index);curriculumDictationState.index=0;curriculumDictationState.result=null;render()}
   else if(action==='cd-mode'){curriculumDictationState.mode=button.dataset.mode;curriculumDictationState.result=null;render()}
-  else if(action==='cd-speak'){speak(currentDictationItem().word.replace(/\s*\([^)]*\)/g,''),true)}
+  else if(action==='cd-speak'){speak(currentDictationItem().word.replace(/\s*\([^)]*\)/g,''))}
   else if(action==='cd-sentence'){speak(currentDictationItem().sentence)}
   else if(action==='cd-answer'){const item=currentDictationItem();curriculumDictationState.result={correct:false,message:`答案：${item.word} = ${item.meaning}`};render()}
   else if(action==='cd-next'){const items=curriculumDictationItems();curriculumDictationState.index=(curriculumDictationState.index+1)%items.length;curriculumDictationState.result=null;render();document.querySelector('#curriculumDictationAnswer')?.focus()}
